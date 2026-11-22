@@ -308,6 +308,7 @@ namespace ScrcpyDex.Core.Tests
                 Task.FromResult<IReadOnlyList<DeviceInfo>>(Array.Empty<DeviceInfo>());
             public Task<DeviceInfo> QueryDeviceInfoAsync(string serial, CancellationToken ct = default) => Task.FromResult(new DeviceInfo());
             public Task<int?> FindDeXDisplayIdAsync(string serial, CancellationToken ct = default) => Task.FromResult<int?>(null);
+            public Task<int?> FindOnigiriDesktopDisplayIdAsync(string serial, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<int?> WaitForDeXDisplayIdAsync(string serial, TimeSpan timeout, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<int?> DeployAndActivateDeXAsync(string serial, string? serverJarPath = null, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<int?> ActivateExperimentalDesktopModeAsync(string serial, int width, int height, int dpi, CancellationToken ct = default) => Task.FromResult<int?>(null);

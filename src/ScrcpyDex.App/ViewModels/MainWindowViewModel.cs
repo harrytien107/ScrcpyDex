@@ -2102,11 +2102,13 @@ namespace ScrcpyDex.App.ViewModels
                     // Step 1: Deploy server and activate DeX virtual display
                     await _stateMachine.FireAsync(SessionTrigger.DeviceReady, "Deploying DeX server").ConfigureAwait(false);
                     int? displayId = null;
+                    int? activationDisplayId = null;
                     string activationPath = "Samsung DeX loopback";
 
                     try
                     {
-                        displayId = await _adbService.DeployAndActivateDeXAsync(sessionSerial).ConfigureAwait(false);
+                        activationDisplayId = await _adbService.DeployAndActivateDeXAsync(sessionSerial).ConfigureAwait(false);
+                        displayId = activationDisplayId;
                     }
                     catch (Exception ex) when (experimentalDexSession)
                     {
@@ -2119,6 +2121,21 @@ namespace ScrcpyDex.App.ViewModels
                     if (!displayId.HasValue)
                     {
                         displayId = await _adbService.FindDeXDisplayIdAsync(sessionSerial).ConfigureAwait(false);
+                    }
+
+                    if (experimentalDexSession && displayId.HasValue)
+                    {
+                        int? onigiriDesktopDisplayId = await _adbService.FindOnigiriDesktopDisplayIdAsync(sessionSerial).ConfigureAwait(false);
+                        if (onigiriDesktopDisplayId.HasValue)
+                        {
+                            int triggerDisplayId = activationDisplayId ?? displayId.Value;
+                            displayId = onigiriDesktopDisplayId;
+                            activationPath = "OnigiriDeX Desktop";
+                            LogEntries.Push(new ProcessLogEntry(
+                                DateTime.Now,
+                                $"OnigiriDeX Desktop active on Display {displayId.Value}; Samsung DeX trigger remains active on Display {triggerDisplayId}.",
+                                false));
+                        }
                     }
 
                     if (!displayId.HasValue && experimentalDexSession)

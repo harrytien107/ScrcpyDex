@@ -79,6 +79,30 @@ namespace ScrcpyDex.Core.Tests
             Assert.Equal(2, displayId);
         }
 
+        [Fact]
+        public void ParseOnigiriDesktopDisplayId_WithTriggerAndDesktop_ReturnsActiveDesktopDisplay()
+        {
+            const string dumpsysOutput =
+                "DisplayInfo{\"ScrcpyDeX\", displayId 30, type WIFI, state ON, FLAG_WIRELESS_DEX_DISPLAY}\n" +
+                "DisplayInfo{\"Desktop\", displayId 2, type VIRTUAL, state ON, FLAG_OWN_DISPLAY_GROUP}";
+
+            int? displayId = AdbService.ParseOnigiriDesktopDisplayId(dumpsysOutput);
+
+            Assert.Equal(2, displayId);
+        }
+
+        [Fact]
+        public void ParseOnigiriDesktopDisplayId_InactiveDesktop_ReturnsNull()
+        {
+            const string dumpsysOutput =
+                "DisplayInfo{\"ScrcpyDeX\", displayId 30, type WIFI, state ON, FLAG_WIRELESS_DEX_DISPLAY}\n" +
+                "DisplayInfo{\"Desktop\", displayId 2, type VIRTUAL, state OFF, FLAG_OWN_DISPLAY_GROUP}";
+
+            int? displayId = AdbService.ParseOnigiriDesktopDisplayId(dumpsysOutput);
+
+            Assert.Null(displayId);
+        }
+
         [Theory]
         [InlineData(null)]
         [InlineData("")]

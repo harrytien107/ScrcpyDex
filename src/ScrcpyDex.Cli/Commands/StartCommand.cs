@@ -141,12 +141,14 @@ namespace ScrcpyDex.Cli.Commands
 
             if (dexSessionRequested)
             {
+                int? activationDisplayId = null;
                 AnsiConsole.Info(experimentalDexSession
                     ? "Attempting Samsung DeX activation for experimental OnigiriDeX target..."
                     : "Deploying and activating Samsung DeX session on device...");
                 try
                 {
-                    displayId = await AdbService.Instance.DeployAndActivateDeXAsync(serial, null, parentCt).ConfigureAwait(false);
+                    activationDisplayId = await AdbService.Instance.DeployAndActivateDeXAsync(serial, null, parentCt).ConfigureAwait(false);
+                    displayId = activationDisplayId;
                 }
                 catch (Exception ex)
                 {
@@ -156,6 +158,17 @@ namespace ScrcpyDex.Cli.Commands
                 if (!displayId.HasValue)
                 {
                     displayId = await AdbService.Instance.FindDeXDisplayIdAsync(serial, parentCt).ConfigureAwait(false);
+                }
+
+                if (experimentalDexSession && displayId.HasValue)
+                {
+                    int? onigiriDesktopDisplayId = await AdbService.Instance.FindOnigiriDesktopDisplayIdAsync(serial, parentCt).ConfigureAwait(false);
+                    if (onigiriDesktopDisplayId.HasValue)
+                    {
+                        int triggerDisplayId = activationDisplayId ?? displayId.Value;
+                        displayId = onigiriDesktopDisplayId;
+                        AnsiConsole.Success($"OnigiriDeX Desktop active on Display {displayId.Value}; Samsung DeX trigger remains active on Display {triggerDisplayId}.");
+                    }
                 }
 
                 if (!displayId.HasValue && experimentalDexSession)

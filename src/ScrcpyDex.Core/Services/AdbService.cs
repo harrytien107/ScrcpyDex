@@ -38,6 +38,7 @@ namespace ScrcpyDex.Services
         Task<IReadOnlyList<DeviceInfo>> GetConnectedDevicesAsync(CancellationToken ct = default);
         Task<DeviceInfo> QueryDeviceInfoAsync(string serial, CancellationToken ct = default);
         Task<int?> FindDeXDisplayIdAsync(string serial, CancellationToken ct = default);
+        Task<int?> FindOnigiriDesktopDisplayIdAsync(string serial, CancellationToken ct = default);
         Task<int?> WaitForDeXDisplayIdAsync(string serial, TimeSpan timeout, CancellationToken ct = default);
         Task<int?> DeployAndActivateDeXAsync(string serial, string? serverJarPath = null, CancellationToken ct = default);
         Task<int?> ActivateExperimentalDesktopModeAsync(string serial, int width, int height, int dpi, CancellationToken ct = default);
@@ -301,6 +302,32 @@ namespace ScrcpyDex.Services
         }
 
         /// <summary>
+        /// Queries the device for the active OnigiriDeX Android "Desktop" workspace display.
+        /// </summary>
+        public async Task<int?> FindOnigiriDesktopDisplayIdAsync(string serial, CancellationToken ct = default)
+        {
+            try
+            {
+                var result = await _resilience.ExecuteWithRetryAsync(
+                    $"-s {serial} shell dumpsys display",
+                    maxRetries: 1,
+                    timeout: TimeSpan.FromSeconds(5),
+                    ct: ct).ConfigureAwait(false);
+
+                if (!result.Succeeded || string.IsNullOrWhiteSpace(result.Output))
+                {
+                    return null;
+                }
+
+                return ParseOnigiriDesktopDisplayId(result.Output);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Polls dumpsys display until the DeX display ID is recognized or timeout expires.
         /// </summary>
         public async Task<int?> WaitForDeXDisplayIdAsync(string serial, TimeSpan timeout, CancellationToken ct = default)
@@ -359,6 +386,23 @@ namespace ScrcpyDex.Services
                 return id5;
 
             return null;
+        }
+
+        /// <summary>
+        /// Extracts the active OnigiriDeX desktop workspace from dumpsys display output.
+        /// </summary>
+        public static int? ParseOnigiriDesktopDisplayId(string dumpsysOutput)
+        {
+            if (string.IsNullOrWhiteSpace(dumpsysOutput)) return null;
+
+            var desktopMatch = Regex.Match(
+                dumpsysOutput,
+                @"DisplayInfo\{""Desktop[^""]*"",\s*displayId\s+(\d+)[^\r\n]*\bstate\s+ON\b",
+                RegexOptions.IgnoreCase);
+
+            return desktopMatch.Success && int.TryParse(desktopMatch.Groups[1].Value, out int desktopId)
+                ? desktopId
+                : null;
         }
 
         /// <summary>
