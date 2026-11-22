@@ -2245,7 +2245,11 @@ namespace ScrcpyDex.App.ViewModels
                     RenderDriver = renderDriver
                 };
 
-                bool execOk = await _executionService.StartAsync(displayConfig, sessionSerial, effectiveDisplayId).ConfigureAwait(false);
+                var executionSettings = ScrcpyExecutionService.MapConfigToSettings(displayConfig);
+                executionSettings.Paths.ScrcpyPath = ScrcpyPath;
+                executionSettings.Paths.AdbPath = AdbPath;
+
+                bool execOk = await _executionService.StartAsync(executionSettings, sessionSerial, effectiveDisplayId).ConfigureAwait(false);
                 if (!execOk)
                 {
                     string errMsg = "scrcpy launch failed or exited prematurely.";
