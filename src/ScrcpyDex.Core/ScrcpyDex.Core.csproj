@@ -20,4 +20,8 @@
     <EmbeddedResource Include="..\..\server\scrcpydex-server.jar" LogicalName="scrcpydex-server.jar" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScrcpyDex.Core.Tests" />
+  </ItemGroup>
+
 </Project>

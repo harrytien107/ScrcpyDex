@@ -13,13 +13,14 @@
 // limitations under the License.
 
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace ScrcpyDex.Core.Platform
 {
-    internal sealed class WindowsAltTabForwarder : IDisposable
+    internal sealed class WindowsDexKeyboardCapture : IDisposable
     {
         private const int WhKeyboardLl = 13;
         private const uint VkTab = 0x09;
@@ -31,19 +32,24 @@ namespace ScrcpyDex.Core.Platform
         private const uint PmNoRemove = 0x0000;
         private const uint LlkhfExtended = 0x01;
         private const uint LlkhfAltDown = 0x20;
+        private const uint GaRoot = 2;
 
         private readonly int _targetProcessId;
+        private readonly bool _mouseDrivenExclusive;
         private readonly HookProc _hookProc;
         private readonly ManualResetEventSlim _started = new(false);
+        private readonly KeyboardCaptureOwnership _ownership = new();
         private Thread? _thread;
         private IntPtr _hookHandle;
+        private IntPtr _targetWindow;
         private uint _threadId;
         private Exception? _startupException;
         private bool _disposed;
 
-        public WindowsAltTabForwarder(int targetProcessId)
+        public WindowsDexKeyboardCapture(int targetProcessId, bool mouseDrivenExclusive)
         {
             _targetProcessId = targetProcessId;
+            _mouseDrivenExclusive = mouseDrivenExclusive;
             _hookProc = HookCallback;
         }
 
@@ -62,18 +68,18 @@ namespace ScrcpyDex.Core.Platform
             _thread = new Thread(HookThreadMain)
             {
                 IsBackground = true,
-                Name = "ScrcpyDeX Alt+Tab Forwarder"
+                Name = "ScrcpyDeX Mouse-Driven Keyboard Capture"
             };
             _thread.Start();
 
             if (!_started.Wait(TimeSpan.FromSeconds(2)))
             {
-                throw new TimeoutException("Timed out while installing the Windows Alt+Tab keyboard hook.");
+                throw new TimeoutException("Timed out while installing the Windows DeX keyboard capture hook.");
             }
 
             if (_startupException != null)
             {
-                throw new InvalidOperationException("Failed to install the Windows Alt+Tab keyboard hook.", _startupException);
+                throw new InvalidOperationException("Failed to install the Windows DeX keyboard capture hook.", _startupException);
             }
         }
 
@@ -135,19 +141,47 @@ namespace ScrcpyDex.Core.Platform
                     if (keyDown || keyUp)
                     {
                         KeyboardHookData data = Marshal.PtrToStructure<KeyboardHookData>(lParam);
-                        if (data.VirtualKeyCode == VkTab &&
-                            (data.Flags & LlkhfAltDown) != 0 &&
-                            TryGetForegroundScrcpyWindow(out IntPtr windowHandle))
+
+                        if (!_mouseDrivenExclusive)
                         {
-                            // Windows handles Alt+Tab before scrcpy can receive it. Suppress the host
-                            // shortcut and re-post Tab as a normal key message. scrcpy already received
-                            // the Alt key state, so its SDK keyboard path forwards the real Alt+Tab
-                            // combination to the selected Android display.
-                            uint targetMessage = keyDown ? WmKeyDown : WmKeyUp;
-                            IntPtr keyLParam = BuildKeyLParam(data, keyUp);
-                            if (PostMessage(windowHandle, targetMessage, (IntPtr)VkTab, keyLParam))
+                            if (data.VirtualKeyCode == VkTab &&
+                                (data.Flags & LlkhfAltDown) != 0 &&
+                                TryGetForegroundScrcpyWindow(out IntPtr foregroundWindow))
                             {
-                                return (IntPtr)1;
+                                uint targetMessage = keyDown ? WmKeyDown : WmKeyUp;
+                                IntPtr keyLParam = BuildKeyLParam(data, keyUp, wasDown: false);
+                                if (PostMessage(foregroundWindow, targetMessage, (IntPtr)VkTab, keyLParam))
+                                {
+                                    return (IntPtr)1;
+                                }
+                            }
+
+                            return CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+                        }
+
+                        bool pointerInside = TryGetScrcpyWindowUnderCursor(out IntPtr hoveredWindow);
+                        bool wasCaptured = _ownership.IsCaptured(data.VirtualKeyCode);
+
+                        if (_ownership.ShouldCapture(data.VirtualKeyCode, keyDown, keyUp, pointerInside))
+                        {
+                            IntPtr targetWindow = pointerInside ? hoveredWindow : _targetWindow;
+                            if (targetWindow != IntPtr.Zero && IsWindowOwnedByTargetProcess(targetWindow))
+                            {
+                                _targetWindow = targetWindow;
+
+                                // Normalize system-key messages to ordinary key messages so Alt-based
+                                // chords reach scrcpy without triggering host-window accelerators.
+                                uint targetMessage = keyDown ? WmKeyDown : WmKeyUp;
+                                IntPtr keyLParam = BuildKeyLParam(data, keyUp, wasCaptured);
+                                if (PostMessage(targetWindow, targetMessage, (IntPtr)data.VirtualKeyCode, keyLParam))
+                                {
+                                    return (IntPtr)1;
+                                }
+                            }
+
+                            if (keyDown && !wasCaptured)
+                            {
+                                _ownership.CancelCapture(data.VirtualKeyCode);
                             }
                         }
                     }
@@ -164,7 +198,42 @@ namespace ScrcpyDex.Core.Platform
         private bool TryGetForegroundScrcpyWindow(out IntPtr windowHandle)
         {
             windowHandle = GetForegroundWindow();
-            if (windowHandle == IntPtr.Zero)
+            return IsWindowOwnedByTargetProcess(windowHandle);
+        }
+
+        private bool TryGetScrcpyWindowUnderCursor(out IntPtr windowHandle)
+        {
+            windowHandle = IntPtr.Zero;
+            if (!GetCursorPos(out Point cursorPosition))
+            {
+                return false;
+            }
+
+            IntPtr hitWindow = WindowFromPoint(cursorPosition);
+            if (hitWindow == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            IntPtr rootWindow = GetAncestor(hitWindow, GaRoot);
+            if (rootWindow == IntPtr.Zero)
+            {
+                rootWindow = hitWindow;
+            }
+
+            if (!IsWindowVisible(rootWindow) || IsIconic(rootWindow) || !IsWindowOwnedByTargetProcess(rootWindow))
+            {
+                return false;
+            }
+
+            windowHandle = rootWindow;
+            _targetWindow = rootWindow;
+            return true;
+        }
+
+        private bool IsWindowOwnedByTargetProcess(IntPtr windowHandle)
+        {
+            if (windowHandle == IntPtr.Zero || !IsWindow(windowHandle))
             {
                 return false;
             }
@@ -173,7 +242,7 @@ namespace ScrcpyDex.Core.Platform
             return processId == unchecked((uint)_targetProcessId);
         }
 
-        private static IntPtr BuildKeyLParam(KeyboardHookData data, bool keyUp)
+        private static IntPtr BuildKeyLParam(KeyboardHookData data, bool keyUp, bool wasDown)
         {
             long value = 1L | ((long)(data.ScanCode & 0xFF) << 16);
             if ((data.Flags & LlkhfExtended) != 0)
@@ -181,9 +250,13 @@ namespace ScrcpyDex.Core.Platform
                 value |= 1L << 24;
             }
 
-            if (keyUp)
+            if (wasDown || keyUp)
             {
                 value |= 1L << 30;
+            }
+
+            if (keyUp)
+            {
                 value |= 1L << 31;
             }
 
@@ -209,6 +282,7 @@ namespace ScrcpyDex.Core.Platform
                 _thread.Join(TimeSpan.FromSeconds(1));
             }
 
+            _ownership.Clear();
             _started.Dispose();
         }
 
@@ -237,6 +311,13 @@ namespace ScrcpyDex.Core.Platform
             public uint Private;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Point
+        {
+            public int X;
+            public int Y;
+        }
+
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr SetWindowsHookEx(int hookId, HookProc callback, IntPtr moduleHandle, uint threadId);
 
@@ -249,6 +330,28 @@ namespace ScrcpyDex.Core.Platform
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out Point point);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(Point point);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr windowHandle, uint flags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(IntPtr windowHandle);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr windowHandle);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsIconic(IntPtr windowHandle);
 
         [DllImport("user32.dll")]
         private static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint processId);
@@ -280,5 +383,42 @@ namespace ScrcpyDex.Core.Platform
 
         [DllImport("kernel32.dll")]
         private static extern uint GetCurrentThreadId();
+    }
+
+    internal sealed class KeyboardCaptureOwnership
+    {
+        private readonly HashSet<uint> _capturedKeys = new();
+
+        public bool IsCaptured(uint virtualKeyCode) => _capturedKeys.Contains(virtualKeyCode);
+
+        public bool ShouldCapture(uint virtualKeyCode, bool keyDown, bool keyUp, bool pointerInside)
+        {
+            if (keyDown)
+            {
+                if (_capturedKeys.Contains(virtualKeyCode))
+                {
+                    return true;
+                }
+
+                if (!pointerInside)
+                {
+                    return false;
+                }
+
+                _capturedKeys.Add(virtualKeyCode);
+                return true;
+            }
+
+            if (keyUp && _capturedKeys.Remove(virtualKeyCode))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public void CancelCapture(uint virtualKeyCode) => _capturedKeys.Remove(virtualKeyCode);
+
+        public void Clear() => _capturedKeys.Clear();
     }
 }

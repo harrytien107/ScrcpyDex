@@ -56,7 +56,7 @@ namespace ScrcpyDex.Services
 
         private Process? _currentProcess;
         private NonBlockingProcessStream? _processStream;
-        private WindowsAltTabForwarder? _altTabForwarder;
+        private WindowsDexKeyboardCapture? _dexKeyboardCapture;
         private TaskCompletionSource<int>? _exitTcs;
         private readonly object _stateLock = new object();
         private bool _isDisposed;
@@ -214,32 +214,40 @@ namespace ScrcpyDex.Services
                     _processStream = processStream;
                 }
 
-                if (OperatingSystem.IsWindows() &&
+                bool sdkSecondaryDisplay =
                     effectiveDisplayId is > 0 &&
-                    string.Equals(NormalizeMouseDriver(settings.Input?.MouseDriver), "sdk", StringComparison.OrdinalIgnoreCase))
+                    string.Equals(NormalizeMouseDriver(settings.Input?.MouseDriver), "sdk", StringComparison.OrdinalIgnoreCase);
+
+                if (OperatingSystem.IsWindows() && sdkSecondaryDisplay)
                 {
-                    WindowsAltTabForwarder? altTabForwarder = null;
+                    int sdkDisplayId = effectiveDisplayId!.Value;
+                    bool mouseDrivenExclusive = IsMouseDrivenDexKeyboardCaptureSession(settings, effectiveDisplayId);
+                    WindowsDexKeyboardCapture? dexKeyboardCapture = null;
                     try
                     {
-                        altTabForwarder = new WindowsAltTabForwarder(process.Id);
-                        altTabForwarder.Start();
+                        dexKeyboardCapture = new WindowsDexKeyboardCapture(process.Id, mouseDrivenExclusive);
+                        dexKeyboardCapture.Start();
 
                         lock (_stateLock)
                         {
-                            _altTabForwarder = altTabForwarder;
+                            _dexKeyboardCapture = dexKeyboardCapture;
                         }
 
                         LogReceived?.Invoke(this, new ProcessLogEntry(
                             DateTime.Now,
-                            $"Windows Alt+Tab forwarding enabled for SDK input on Display {effectiveDisplayId.Value}.",
+                            mouseDrivenExclusive
+                                ? $"Mouse-driven exclusive DeX keyboard capture enabled for SDK input on Display {sdkDisplayId}."
+                                : $"Windows Alt+Tab forwarding enabled for SDK input on Display {sdkDisplayId}.",
                             ProcessLogLevel.Info));
                     }
                     catch (Exception ex)
                     {
-                        altTabForwarder?.Dispose();
+                        dexKeyboardCapture?.Dispose();
                         LogReceived?.Invoke(this, new ProcessLogEntry(
                             DateTime.Now,
-                            $"Windows Alt+Tab forwarding could not be enabled: {ex.Message}",
+                            mouseDrivenExclusive
+                                ? $"Mouse-driven DeX keyboard capture could not be enabled: {ex.Message}"
+                                : $"Windows Alt+Tab forwarding could not be enabled: {ex.Message}",
                             ProcessLogLevel.Warning));
                     }
                 }
@@ -300,7 +308,7 @@ namespace ScrcpyDex.Services
         {
             Process? proc;
             NonBlockingProcessStream? stream;
-            WindowsAltTabForwarder? altTabForwarder;
+            WindowsDexKeyboardCapture? dexKeyboardCapture;
 
             lock (_stateLock)
             {
@@ -308,11 +316,11 @@ namespace ScrcpyDex.Services
                 _stopping = true;
                 proc = _currentProcess;
                 stream = _processStream;
-                altTabForwarder = _altTabForwarder;
-                _altTabForwarder = null;
+                dexKeyboardCapture = _dexKeyboardCapture;
+                _dexKeyboardCapture = null;
             }
 
-            altTabForwarder?.Dispose();
+            dexKeyboardCapture?.Dispose();
 
             TimeSpan effectiveTimeout = timeout ?? TimeSpan.FromMilliseconds(350);
 
@@ -509,6 +517,14 @@ namespace ScrcpyDex.Services
             args.Add("--window-title=ScrcpyDeX - Samsung DeX Compatible Client");
 
             return args;
+        }
+
+        internal static bool IsMouseDrivenDexKeyboardCaptureSession(ScrcpyDeXSettings settings, int? displayId)
+        {
+            return settings.Device?.ExperimentalDex == true &&
+                displayId is > 0 &&
+                string.Equals(NormalizeMouseDriver(settings.Input?.MouseDriver), "sdk", StringComparison.OrdinalIgnoreCase) &&
+                settings.Input?.ForwardShortcuts != true;
         }
 
         public static string? NormalizeRenderDriver(string? renderDriver)
@@ -773,7 +789,7 @@ namespace ScrcpyDex.Services
         private void OnProcessExitedInternal(object? sender, EventArgs e)
         {
             int exitCode = -1;
-            WindowsAltTabForwarder? altTabForwarder;
+            WindowsDexKeyboardCapture? dexKeyboardCapture;
             try
             {
                 if (sender is Process proc && proc.HasExited)
@@ -785,15 +801,15 @@ namespace ScrcpyDex.Services
 
             lock (_stateLock)
             {
-                altTabForwarder = _altTabForwarder;
-                _altTabForwarder = null;
+                dexKeyboardCapture = _dexKeyboardCapture;
+                _dexKeyboardCapture = null;
                 _currentProcess = null;
                 _processStream = null;
                 _stopping = false;
                 _streamingStartedFired = false;
             }
 
-            altTabForwarder?.Dispose();
+            dexKeyboardCapture?.Dispose();
 
             _exitTcs?.TrySetResult(exitCode);
             ProcessExited?.Invoke(this, exitCode);

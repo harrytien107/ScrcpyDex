@@ -2269,6 +2269,7 @@ namespace ScrcpyDex.App.ViewModels
                 var executionSettings = ScrcpyExecutionService.MapConfigToSettings(displayConfig);
                 executionSettings.Paths.ScrcpyPath = ScrcpyPath;
                 executionSettings.Paths.AdbPath = AdbPath;
+                executionSettings.Device.ExperimentalDex = experimentalDexSession;
 
                 bool execOk = await _executionService.StartAsync(executionSettings, sessionSerial, effectiveDisplayId).ConfigureAwait(false);
                 if (!execOk)
