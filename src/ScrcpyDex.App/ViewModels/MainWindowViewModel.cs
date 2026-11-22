@@ -2253,11 +2253,15 @@ namespace ScrcpyDex.App.ViewModels
                     Bitrate = BitrateMbps * 1_000_000,
                     Codec = SelectedCodec,
                     WindowMode = Fullscreen ? "fullscreen" : "normal",
-                    MouseDriver = experimentalDexSession ? "uhid" : ResolveEffectiveMouseDriver(),
+                    // OnigiriDeX runs on a separate Android virtual display. UHID emulates a
+                    // physical device and Android may route it to Display 0 instead of the
+                    // mirrored desktop. SDK injection is display-aware in scrcpy.
+                    MouseDriver = experimentalDexSession ? "sdk" : ResolveEffectiveMouseDriver(),
                     StayAwake = StayAwake,
                     TurnScreenOff = TurnScreenOff,
                     RecordFile = recordFile,
-                    ForwardShortcuts = experimentalDexSession || ForwardShortcuts,
+                    // Keep the keyboard on scrcpy's SDK injection path for the Onigiri display.
+                    ForwardShortcuts = experimentalDexSession ? false : ForwardShortcuts,
                     AudioEnabled = LowLatencyAudio && !SelectedAudioCodec.Equals("Disabled", StringComparison.OrdinalIgnoreCase),
                     RenderDriver = renderDriver
                 };

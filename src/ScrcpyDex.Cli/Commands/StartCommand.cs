@@ -134,9 +134,9 @@ namespace ScrcpyDex.Cli.Commands
 
             if (experimentalDexSession)
             {
-                settings.Input.MouseDriver = "uhid";
-                settings.Input.ForwardShortcuts = true;
-                AnsiConsole.Info("Experimental DeX enabled for Galaxy Z Flip5. UHID mouse and keyboard input will be used.");
+                settings.Input.MouseDriver = "sdk";
+                settings.Input.ForwardShortcuts = false;
+                AnsiConsole.Info("Experimental DeX enabled for Galaxy Z Flip5. Display-aware SDK mouse and keyboard input will be used.");
             }
 
             if (dexSessionRequested)

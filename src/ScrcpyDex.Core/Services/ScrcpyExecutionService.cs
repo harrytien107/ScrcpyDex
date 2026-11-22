@@ -438,10 +438,16 @@ namespace ScrcpyDex.Services
                 args.Add($"--record={settings.Display.RecordFile}");
             }
 
-            // Keyboard shortcut forwarding (UHID)
+            // Keyboard input. SDK injection follows the selected Android display, which is
+            // required for OnigiriDeX's secondary virtual desktop. UHID remains available
+            // when shortcut forwarding is explicitly requested.
             if (settings.Input?.ForwardShortcuts == true)
             {
                 args.Add("--keyboard=uhid");
+            }
+            else if (mouseDriver == "sdk")
+            {
+                args.Add("--keyboard=sdk");
             }
 
             // Window mode

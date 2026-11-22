@@ -300,6 +300,20 @@ namespace ScrcpyDex.Core.Tests
         }
 
         [Fact]
+        public void BuildArgumentsList_WithSdkMouse_UsesSdkKeyboardWhenShortcutsAreNotForwarded()
+        {
+            var settings = new ScrcpyDeXSettings();
+            settings.Input.MouseDriver = "sdk";
+            settings.Input.ForwardShortcuts = false;
+
+            List<string> args = ScrcpyExecutionService.BuildArgumentsList(settings);
+
+            Assert.Contains("--mouse=sdk", args);
+            Assert.Contains("--keyboard=sdk", args);
+            Assert.DoesNotContain("--keyboard=uhid", args);
+        }
+
+        [Fact]
         public void BuildArgumentsList_WithLabeledResolution_ParsesMaxSizeCorrectly()
         {
             var settings = new ScrcpyDeXSettings();
