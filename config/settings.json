@@ -24,7 +24,8 @@
   "device": {
     "turnScreenOff": false,
     "stayAwake": false,
-    "autoConnect": false
+    "autoConnect": false,
+    "experimentalDex": false
   },
   "ui": {
     "theme": "dark",

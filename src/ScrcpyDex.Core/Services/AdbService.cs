@@ -40,6 +40,7 @@ namespace ScrcpyDex.Services
         Task<int?> FindDeXDisplayIdAsync(string serial, CancellationToken ct = default);
         Task<int?> WaitForDeXDisplayIdAsync(string serial, TimeSpan timeout, CancellationToken ct = default);
         Task<int?> DeployAndActivateDeXAsync(string serial, string? serverJarPath = null, CancellationToken ct = default);
+        Task<int?> ActivateExperimentalDesktopModeAsync(string serial, int width, int height, int dpi, CancellationToken ct = default);
         Task<bool> SetDisplaySizeAsync(string serial, int displayId, int width, int height, CancellationToken ct = default);
         Task<bool> SetDisplayDpiAsync(string serial, int displayId, int dpi, CancellationToken ct = default);
         Task StopDeXSessionAsync(string? serial = null, CancellationToken ct = default);
@@ -67,6 +68,8 @@ namespace ScrcpyDex.Services
         private readonly ConcurrentDictionary<string, byte> _knownTlsEndpoints = new(StringComparer.OrdinalIgnoreCase);
         private Process? _activatorProcess;
         private NonBlockingProcessStream? _activatorStream;
+        private string? _experimentalOverlaySerial;
+        private string? _experimentalOverlayValue;
 
         private static readonly Lazy<AdbService> _defaultInstance = new Lazy<AdbService>(() => new AdbService());
         public static AdbService Instance => _defaultInstance.Value;
@@ -321,10 +324,19 @@ namespace ScrcpyDex.Services
         {
             if (string.IsNullOrWhiteSpace(dumpsysOutput)) return null;
 
-            // Pattern 1: DisplayInfo{"ScrcpyDeX", displayId 2, ...} or {"Samsung DeX", displayId 2}
-            var match1 = Regex.Match(dumpsysOutput, @"DisplayInfo\{""(?:ScrcpyDeX|Samsung DeX|Desktop)[^""]*"",\s*displayId\s+(\d+)", RegexOptions.IgnoreCase);
+            // Pattern 1: explicit ScrcpyDeX / Samsung DeX logical displays.
+            var match1 = Regex.Match(dumpsysOutput, @"DisplayInfo\{""(?:ScrcpyDeX|Samsung DeX)[^""]*"",\s*displayId\s+(\d+)", RegexOptions.IgnoreCase);
             if (match1.Success && int.TryParse(match1.Groups[1].Value, out int id1))
                 return id1;
+
+            // OnigiriDeX exposes a persistent Android "Desktop" display even while desktop mode is idle.
+            // Treat it as usable only when dumpsys reports that logical display as ON.
+            var desktopMatch = Regex.Match(
+                dumpsysOutput,
+                @"DisplayInfo\{""Desktop[^""]*"",\s*displayId\s+(\d+)[^\r\n]*\bstate\s+ON\b",
+                RegexOptions.IgnoreCase);
+            if (desktopMatch.Success && int.TryParse(desktopMatch.Groups[1].Value, out int desktopId))
+                return desktopId;
 
             // Pattern 2: Display 2: ... mPrimaryDisplayDevice=ScrcpyDeX or name="ScrcpyDeX"
             var match2 = Regex.Match(dumpsysOutput, @"Display\s+(\d+)[\s\S]*?(?:mPrimaryDisplayDevice=ScrcpyDeX|name=""ScrcpyDeX""|name=""Samsung DeX"")", RegexOptions.IgnoreCase);
@@ -347,6 +359,26 @@ namespace ScrcpyDex.Services
                 return id5;
 
             return null;
+        }
+
+        /// <summary>
+        /// Extracts every display ID exposed by dumpsys display. Used to identify a display
+        /// created specifically for the experimental desktop-mode fallback.
+        /// </summary>
+        public static IReadOnlyCollection<int> ParseDisplayIds(string dumpsysOutput)
+        {
+            var ids = new HashSet<int>();
+            if (string.IsNullOrWhiteSpace(dumpsysOutput)) return ids;
+
+            foreach (Match match in Regex.Matches(dumpsysOutput, @"(?:displayId\s*[:=]?\s*|mDisplayId=)(\d+)", RegexOptions.IgnoreCase))
+            {
+                if (int.TryParse(match.Groups[1].Value, out int id))
+                {
+                    ids.Add(id);
+                }
+            }
+
+            return ids;
         }
 
         #endregion
@@ -445,6 +477,250 @@ namespace ScrcpyDex.Services
         }
 
         /// <summary>
+        /// Experimental fallback for custom ROMs that expose Android desktop-windowing commands.
+        /// Creates one temporary overlay display, activates a desktop workspace on it, and tracks
+        /// the exact overlay setting so cleanup can remove only the display created by this service.
+        /// </summary>
+        public async Task<int?> ActivateExperimentalDesktopModeAsync(
+            string serial,
+            int width,
+            int height,
+            int dpi,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(serial) ||
+                width < 640 || width > 7680 ||
+                height < 480 || height > 4320 ||
+                dpi < 72 || dpi > 640)
+            {
+                return null;
+            }
+
+            ResetResilienceState();
+
+            // If the Samsung activator actually produced a recognizable display before exiting,
+            // prefer that display and avoid creating any additional Android display state.
+            int? existingDexDisplay = await FindDeXDisplayIdAsync(serial, ct).ConfigureAwait(false);
+            if (existingDexDisplay.HasValue && existingDexDisplay.Value > 0)
+            {
+                return existingDexDisplay;
+            }
+
+            var commandList = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell cmd -l",
+                TimeSpan.FromSeconds(3),
+                ct).ConfigureAwait(false);
+
+            bool hasDesktopModeService = commandList.Succeeded &&
+                commandList.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Any(line => line.Trim().Equals("desktopmode", StringComparison.OrdinalIgnoreCase));
+
+            AdbExecutionResult? desktopModeHelp = null;
+            if (hasDesktopModeService)
+            {
+                desktopModeHelp = await _resilience.ExecuteDirectAsync(
+                    $"-s {serial} shell cmd desktopmode help",
+                    TimeSpan.FromSeconds(3),
+                    ct).ConfigureAwait(false);
+            }
+
+            var wmShellHelp = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell \"dumpsys activity service SystemUIService WMShell desktopmode help\"",
+                TimeSpan.FromSeconds(4),
+                ct).ConfigureAwait(false);
+
+            var wmCommandHelp = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell wm shell desktopmode help",
+                TimeSpan.FromSeconds(4),
+                ct).ConfigureAwait(false);
+
+            bool cmdCanCreateDesk = desktopModeHelp != null && SupportsCreateDeskCommand(desktopModeHelp);
+            bool wmServiceCanCreateDesk = SupportsCreateDeskCommand(wmShellHelp);
+            bool wmCommandCanCreateDesk = SupportsCreateDeskCommand(wmCommandHelp);
+
+            if (!cmdCanCreateDesk && !wmServiceCanCreateDesk && !wmCommandCanCreateDesk)
+            {
+                return null;
+            }
+
+            var overlaySetting = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell settings get global overlay_display_devices",
+                TimeSpan.FromSeconds(3),
+                ct).ConfigureAwait(false);
+
+            if (!overlaySetting.Succeeded)
+            {
+                return null;
+            }
+
+            string existingOverlayValue = overlaySetting.Output.Trim();
+            if (!string.IsNullOrWhiteSpace(existingOverlayValue) &&
+                !existingOverlayValue.Equals("null", StringComparison.OrdinalIgnoreCase))
+            {
+                // Do not overwrite a display configuration owned by the user or another tool.
+                return null;
+            }
+
+            var beforeDump = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell dumpsys display",
+                TimeSpan.FromSeconds(5),
+                ct).ConfigureAwait(false);
+            var beforeIds = beforeDump.Succeeded
+                ? new HashSet<int>(ParseDisplayIds(beforeDump.Output))
+                : new HashSet<int>();
+
+            string overlayValue = $"{width}x{height}/{dpi}";
+            var setOverlay = await _resilience.ExecuteDirectAsync(
+                $"-s {serial} shell settings put global overlay_display_devices {overlayValue}",
+                TimeSpan.FromSeconds(3),
+                ct).ConfigureAwait(false);
+
+            if (!setOverlay.Succeeded)
+            {
+                return null;
+            }
+
+            _experimentalOverlaySerial = serial;
+            _experimentalOverlayValue = overlayValue;
+
+            int? createdDisplayId = null;
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                while (sw.Elapsed < TimeSpan.FromSeconds(5) && !ct.IsCancellationRequested)
+                {
+                    var afterDump = await _resilience.ExecuteDirectAsync(
+                        $"-s {serial} shell dumpsys display",
+                        TimeSpan.FromSeconds(4),
+                        ct).ConfigureAwait(false);
+
+                    if (afterDump.Succeeded)
+                    {
+                        createdDisplayId = ParseDisplayIds(afterDump.Output)
+                            .Where(id => id > 0 && !beforeIds.Contains(id))
+                            .OrderByDescending(id => id)
+                            .Cast<int?>()
+                            .FirstOrDefault();
+                    }
+
+                    if (createdDisplayId.HasValue)
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(250, ct).ConfigureAwait(false);
+                }
+
+                if (!createdDisplayId.HasValue)
+                {
+                    await RestoreExperimentalOverlayDisplayAsync(serial, ct).ConfigureAwait(false);
+                    return null;
+                }
+
+                var activationCommands = new List<string>();
+                if (cmdCanCreateDesk)
+                {
+                    activationCommands.Add($"-s {serial} shell cmd desktopmode createDesk {createdDisplayId.Value}");
+                }
+                if (wmCommandCanCreateDesk)
+                {
+                    activationCommands.Add($"-s {serial} shell wm shell desktopmode createDesk {createdDisplayId.Value}");
+                }
+                if (wmServiceCanCreateDesk)
+                {
+                    activationCommands.Add($"-s {serial} shell \"dumpsys activity service SystemUIService WMShell desktopmode createDesk {createdDisplayId.Value}\"");
+                }
+
+                foreach (string command in activationCommands)
+                {
+                    var result = await _resilience.ExecuteDirectAsync(
+                        command,
+                        TimeSpan.FromSeconds(5),
+                        ct).ConfigureAwait(false);
+
+                    if (IsDesktopModeCommandSuccessful(result))
+                    {
+                        return createdDisplayId;
+                    }
+                }
+
+                await RestoreExperimentalOverlayDisplayAsync(serial, ct).ConfigureAwait(false);
+                return null;
+            }
+            catch
+            {
+                await RestoreExperimentalOverlayDisplayAsync(serial, CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private static bool IsDesktopModeCommandAvailable(AdbExecutionResult result)
+        {
+            if (!result.Succeeded) return false;
+            string text = $"{result.Output}\n{result.Error}";
+            return !string.IsNullOrWhiteSpace(text) &&
+                   !text.Contains("unknown command", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("invalid command", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("not found", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("can't find service", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool SupportsCreateDeskCommand(AdbExecutionResult result)
+        {
+            if (!IsDesktopModeCommandAvailable(result)) return false;
+            string text = $"{result.Output}\n{result.Error}";
+            return text.Contains("createDesk", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsDesktopModeCommandSuccessful(AdbExecutionResult result)
+        {
+            if (!result.Succeeded) return false;
+            string text = $"{result.Output}\n{result.Error}";
+            return !text.Contains("unknown command", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("invalid command", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("not found", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("can't find service", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("exception", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("error:", StringComparison.OrdinalIgnoreCase) &&
+                   !text.Contains("failed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task RestoreExperimentalOverlayDisplayAsync(string serial, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_experimentalOverlaySerial) ||
+                string.IsNullOrWhiteSpace(_experimentalOverlayValue) ||
+                !_experimentalOverlaySerial.Equals(serial, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                var current = await _resilience.ExecuteDirectAsync(
+                    $"-s {serial} shell settings get global overlay_display_devices",
+                    TimeSpan.FromSeconds(3),
+                    ct).ConfigureAwait(false);
+
+                if (current.Succeeded && current.Output.Trim().Equals(_experimentalOverlayValue, StringComparison.Ordinal))
+                {
+                    await _resilience.ExecuteDirectAsync(
+                        $"-s {serial} shell settings delete global overlay_display_devices",
+                        TimeSpan.FromSeconds(3),
+                        ct).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup. Keep teardown resilient if the device disconnected.
+            }
+            finally
+            {
+                _experimentalOverlaySerial = null;
+                _experimentalOverlayValue = null;
+            }
+        }
+
+        /// <summary>
         /// Applies a custom logical resolution to a specific virtual display via 'wm size'.
         /// Restricted to virtual displays (displayId > 0) to avoid altering the primary phone screen.
         /// </summary>
@@ -539,13 +815,19 @@ namespace ScrcpyDex.Services
 
             try
             {
-                // Step 2: Fallback broadcast to stop desktop mode launcher and terminate remaining server processes
+                // Step 2: Fallback broadcast to stop desktop mode launcher and terminate our server process.
+                // Do not kill generic scrcpy processes because they may belong to another session/tool.
                 await _resilience.ExecuteDirectAsync(
-                    $"{target}shell \"am broadcast -a com.sec.android.app.desktoplauncher.ACTION_STOP_DESKTOP_MODE ; am broadcast -a com.samsung.android.desktopmode.action.DESKTOP_MODE_UPDATE --ez enabled false ; pkill -f com.scrcpydex.server.Server ; pkill -f scrcpy\"",
+                    $"{target}shell \"am broadcast -a com.sec.android.app.desktoplauncher.ACTION_STOP_DESKTOP_MODE ; am broadcast -a com.samsung.android.desktopmode.action.DESKTOP_MODE_UPDATE --ez enabled false ; pkill -f com.scrcpydex.server.Server\"",
                     TimeSpan.FromSeconds(2),
                     ct).ConfigureAwait(false);
             }
             catch { }
+
+            if (!string.IsNullOrWhiteSpace(serial))
+            {
+                await RestoreExperimentalOverlayDisplayAsync(serial, ct).ConfigureAwait(false);
+            }
 
         }
 

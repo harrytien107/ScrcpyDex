@@ -123,9 +123,27 @@ namespace ScrcpyDex.Cli.Commands
 
             // 4. Deploy & activate on-device Samsung DeX server (or use Display 0 for non-DeX devices)
             int? displayId = null;
-            if (devInfo.IsDexSupported)
+            bool experimentalDexEligible = SamsungDeviceModelResolver.IsExperimentalDeXSupportedSamsungModel(devInfo.ModelCode);
+            bool experimentalDexSession = settings.Device.ExperimentalDex && experimentalDexEligible && !devInfo.IsDexSupported;
+            bool dexSessionRequested = devInfo.IsDexSupported || experimentalDexSession;
+
+            if (settings.Device.ExperimentalDex && !experimentalDexEligible && !devInfo.IsDexSupported)
             {
-                AnsiConsole.Info("Deploying and activating Samsung DeX session on device...");
+                AnsiConsole.Warning($"Experimental DeX is enabled, but '{devInfo.ModelCode}' is not an experimental OnigiriDeX target. Using screen mirroring.");
+            }
+
+            if (experimentalDexSession)
+            {
+                settings.Input.MouseDriver = "uhid";
+                settings.Input.ForwardShortcuts = true;
+                AnsiConsole.Info("Experimental DeX enabled for Galaxy Z Flip5. UHID mouse and keyboard input will be used.");
+            }
+
+            if (dexSessionRequested)
+            {
+                AnsiConsole.Info(experimentalDexSession
+                    ? "Attempting Samsung DeX activation for experimental OnigiriDeX target..."
+                    : "Deploying and activating Samsung DeX session on device...");
                 try
                 {
                     displayId = await AdbService.Instance.DeployAndActivateDeXAsync(serial, null, parentCt).ConfigureAwait(false);
@@ -138,6 +156,31 @@ namespace ScrcpyDex.Cli.Commands
                 if (!displayId.HasValue)
                 {
                     displayId = await AdbService.Instance.FindDeXDisplayIdAsync(serial, parentCt).ConfigureAwait(false);
+                }
+
+                if (!displayId.HasValue && experimentalDexSession)
+                {
+                    int fallbackWidth = 1920;
+                    int fallbackHeight = 1080;
+                    if (ScrcpyExecutionService.TryResolveDisplayDimensions(settings.Display, out int configuredWidth, out int configuredHeight))
+                    {
+                        fallbackWidth = configuredWidth;
+                        fallbackHeight = configuredHeight;
+                    }
+
+                    int fallbackDpi = settings.Display?.Dpi is >= 72 and <= 640 ? settings.Display.Dpi.Value : 160;
+                    AnsiConsole.Warning("Samsung DeX loopback activation did not expose a display. Checking the ROM desktop-mode interface...");
+                    displayId = await AdbService.Instance.ActivateExperimentalDesktopModeAsync(
+                        serial,
+                        fallbackWidth,
+                        fallbackHeight,
+                        fallbackDpi,
+                        parentCt).ConfigureAwait(false);
+
+                    if (displayId.HasValue)
+                    {
+                        AnsiConsole.Success($"Experimental Android desktop-mode fallback activated (Display ID: {displayId.Value}).");
+                    }
                 }
 
                 if (displayId.HasValue)
@@ -173,7 +216,15 @@ namespace ScrcpyDex.Cli.Commands
                 }
                 else
                 {
-                    AnsiConsole.Warning("Could not determine specific virtual display ID. Launching scrcpy with auto-detected display.");
+                    if (experimentalDexSession)
+                    {
+                        AnsiConsole.Warning("Experimental DeX activation was unavailable. Falling back to standard screen mirroring on Display 0.");
+                        displayId = 0;
+                    }
+                    else
+                    {
+                        AnsiConsole.Warning("Could not determine specific virtual display ID. Launching scrcpy with auto-detected display.");
+                    }
                 }
             }
             else
@@ -200,7 +251,10 @@ namespace ScrcpyDex.Cli.Commands
             // Register cleanup action to unregister DeX session cleanly on device
             LinuxProcessLifetimeManager.Default.RegisterCleanupAction(async () =>
             {
-                await AdbService.Instance.StopDeXSessionAsync(serial).ConfigureAwait(false);
+                if (dexSessionRequested)
+                {
+                    await AdbService.Instance.StopDeXSessionAsync(serial).ConfigureAwait(false);
+                }
             });
 
             // 7. Launch scrcpy streaming client
@@ -221,7 +275,7 @@ namespace ScrcpyDex.Cli.Commands
                 if (!started)
                 {
                     AnsiConsole.Error("Failed to start scrcpy streaming client.");
-                    await CleanupSessionAsync(serial, devInfo.IsDexSupported).ConfigureAwait(false);
+                    await CleanupSessionAsync(serial, dexSessionRequested).ConfigureAwait(false);
                     return 1;
                 }
 
@@ -250,7 +304,7 @@ namespace ScrcpyDex.Cli.Commands
                 }
                 catch { }
 
-                await CleanupSessionAsync(serial, devInfo.IsDexSupported).ConfigureAwait(false);
+                await CleanupSessionAsync(serial, dexSessionRequested).ConfigureAwait(false);
                 AnsiConsole.Success("Session finished. Device display restored.");
             }
 
@@ -321,6 +375,10 @@ namespace ScrcpyDex.Cli.Commands
             if (options.AudioEnabled.HasValue)
             {
                 settings.Audio.Enabled = options.AudioEnabled.Value;
+            }
+            if (options.ExperimentalDex == true)
+            {
+                settings.Device.ExperimentalDex = true;
             }
 
             // Defaults for Linux if not explicitly set

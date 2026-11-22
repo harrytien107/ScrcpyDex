@@ -293,6 +293,7 @@ namespace ScrcpyDex.Core.Configuration
         private bool _turnScreenOff = false;
         private bool _stayAwake = false;
         private bool _autoConnect = false;
+        private bool _experimentalDex = false;
 
         [JsonPropertyName("turnScreenOff")]
         public bool TurnScreenOff { get => _turnScreenOff; set => SetProperty(ref _turnScreenOff, value); }
@@ -302,6 +303,9 @@ namespace ScrcpyDex.Core.Configuration
 
         [JsonPropertyName("autoConnect")]
         public bool AutoConnect { get => _autoConnect; set => SetProperty(ref _autoConnect, value); }
+
+        [JsonPropertyName("experimentalDex")]
+        public bool ExperimentalDex { get => _experimentalDex; set => SetProperty(ref _experimentalDex, value); }
     }
 
     public sealed class PathsSection : ObservableObject

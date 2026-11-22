@@ -90,6 +90,18 @@ namespace ScrcpyDex.Core.Tests
             Assert.True(SamsungDeviceModelResolver.IsDeXSupportedSamsungModel(model));
         }
 
+        [Theory]
+        [InlineData("SM-F731B", true)]
+        [InlineData("SM-F731N", true)]
+        [InlineData("SM-F731U", false)]
+        [InlineData("SM-F741B", false)]
+        [InlineData("SM-F946B", false)]
+        [InlineData("SM-S928B", false)]
+        public void ExperimentalDeXSupport_IsRestrictedToOnigiriDexFlip5Models(string model, bool expected)
+        {
+            Assert.Equal(expected, SamsungDeviceModelResolver.IsExperimentalDeXSupportedSamsungModel(model));
+        }
+
         [Fact]
         public void DeviceInfo_ReflectsCapabilitiesAccurately()
         {

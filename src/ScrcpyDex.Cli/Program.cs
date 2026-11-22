@@ -124,6 +124,7 @@ namespace ScrcpyDex.Cli
             Console.WriteLine("  --render-driver <NAME>  Rendering backend: opengl (Linux default) or direct3d11");
             Console.WriteLine("  --stay-awake            Keep mobile device awake during active session");
             Console.WriteLine("  --turn-screen-off       Turn mobile physical display off while streaming");
+            Console.WriteLine("  --experimental-dex      Enable experimental DeX for supported custom-ROM devices (Z Flip5 OnigiriDeX)");
             Console.WriteLine("  --fullscreen            Open scrcpy window in fullscreen mode");
             Console.WriteLine("  --no-audio              Disable device audio tunneling");
             Console.WriteLine("  --config <PATH>         Path to custom settings.json configuration file\n");

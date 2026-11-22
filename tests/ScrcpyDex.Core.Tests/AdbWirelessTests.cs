@@ -310,6 +310,7 @@ namespace ScrcpyDex.Core.Tests
             public Task<int?> FindDeXDisplayIdAsync(string serial, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<int?> WaitForDeXDisplayIdAsync(string serial, TimeSpan timeout, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<int?> DeployAndActivateDeXAsync(string serial, string? serverJarPath = null, CancellationToken ct = default) => Task.FromResult<int?>(null);
+            public Task<int?> ActivateExperimentalDesktopModeAsync(string serial, int width, int height, int dpi, CancellationToken ct = default) => Task.FromResult<int?>(null);
             public Task<bool> SetDisplaySizeAsync(string serial, int displayId, int width, int height, CancellationToken ct = default) => Task.FromResult(true);
             public Task<bool> SetDisplayDpiAsync(string serial, int displayId, int dpi, CancellationToken ct = default) => Task.FromResult(true);
             public Task StopDeXSessionAsync(string? serial = null, CancellationToken ct = default) => Task.CompletedTask;

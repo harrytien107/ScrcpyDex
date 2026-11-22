@@ -47,6 +47,7 @@ namespace ScrcpyDex.Cli.Utils
         public string? MouseDriver { get; set; }
         public string? RenderDriver { get; set; }
         public bool? AudioEnabled { get; set; }
+        public bool? ExperimentalDex { get; set; }
         public string? CustomConfigPath { get; set; }
 
         // Config subcommand details
@@ -238,6 +239,9 @@ namespace ScrcpyDex.Cli.Utils
                         break;
                     case "--no-audio":
                         options.AudioEnabled = false;
+                        break;
+                    case "--experimental-dex":
+                        options.ExperimentalDex = true;
                         break;
                     case "--config":
                     case "--config-path":

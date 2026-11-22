@@ -113,6 +113,20 @@ namespace ScrcpyDex.Models
         }
 
         /// <summary>
+        /// Identifies Samsung models that can expose DeX only through an explicitly enabled
+        /// experimental/custom-ROM path. These models remain mirror-only in the normal
+        /// capability resolver so stock firmware behavior does not change.
+        /// </summary>
+        public static bool IsExperimentalDeXSupportedSamsungModel(string? rawModel)
+        {
+            if (string.IsNullOrWhiteSpace(rawModel)) return false;
+            string model = NormalizeModelCode(rawModel);
+
+            return model.Equals("SM-F731B", StringComparison.OrdinalIgnoreCase) ||
+                   model.Equals("SM-F731N", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Resolves the device capability (SamsungDeX, SamsungMirrorOnly, or GenericMirrorOnly).
         /// </summary>
         public static DeviceCapability ResolveCapability(string? rawModel, string? manufacturer = null)

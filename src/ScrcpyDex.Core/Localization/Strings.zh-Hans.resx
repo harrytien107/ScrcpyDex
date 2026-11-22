@@ -485,6 +485,12 @@
   <data name="QuickOptions_StayAwake" xml:space="preserve">
     <value>保持设备唤醒</value>
   </data>
+  <data name="QuickOptions_ExperimentalDex" xml:space="preserve">
+    <value>实验性 DeX（OnigiriDeX）</value>
+  </data>
+  <data name="QuickOptions_ExperimentalDex_Desc" xml:space="preserve">
+    <value>在受支持的 Galaxy Z Flip5 自定义 ROM 上启用 DeX 尝试。</value>
+  </data>
   <data name="QuickOptions_StayAwake_Desc" xml:space="preserve">
     <value>防止 Android 在会话期间休眠</value>
   </data>

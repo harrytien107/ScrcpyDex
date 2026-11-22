@@ -66,6 +66,8 @@ namespace ScrcpyDex.App.ViewModels
         private string? _pendingUnplugUsbSerial;
         private string? _pendingUnplugWirelessSerial;
         private bool _pendingUnplugUsedLegacyTcpIp;
+        private string? _activeSessionSerial;
+        private bool _activeSessionRequiresDexCleanup;
         private bool _hasCompletedInitialScan;
         private bool _isDisposed;
 
@@ -140,6 +142,8 @@ namespace ScrcpyDex.App.ViewModels
         [NotifyPropertyChangedFor(nameof(StatusPillText))]
         [NotifyPropertyChangedFor(nameof(StatusBadgeColor))]
         [NotifyPropertyChangedFor(nameof(ModeIndicatorText))]
+        [NotifyPropertyChangedFor(nameof(IsExperimentalDexEligible))]
+        [NotifyPropertyChangedFor(nameof(IsExperimentalDexActive))]
         [NotifyPropertyChangedFor(nameof(IsDexMode))]
         [NotifyPropertyChangedFor(nameof(IsMirroringMode))]
         [NotifyPropertyChangedFor(nameof(StartSessionButtonText))]
@@ -515,6 +519,18 @@ namespace ScrcpyDex.App.ViewModels
         private bool _turnScreenOff = false;
 
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(IsExperimentalDexActive))]
+        [NotifyPropertyChangedFor(nameof(IsDexMode))]
+        [NotifyPropertyChangedFor(nameof(IsMirroringMode))]
+        [NotifyPropertyChangedFor(nameof(StartSessionButtonText))]
+        [NotifyPropertyChangedFor(nameof(DeviceFrameFallbackText))]
+        [NotifyPropertyChangedFor(nameof(ConnectionDetailsText))]
+        private bool _experimentalDex = false;
+
+        [ObservableProperty]
+        private string _dexActivationStatusText = string.Empty;
+
+        [ObservableProperty]
         private bool _fullscreen = false;
 
         [ObservableProperty]
@@ -683,9 +699,17 @@ namespace ScrcpyDex.App.ViewModels
 
         public string ConnectionStatusBackground => HasSelectedDevice ? "#241912" : "#1B1B22";
 
-        public bool IsDexMode => SelectedDevice != null && SelectedDevice.IsDexSupported;
+        public bool IsExperimentalDexEligible => SelectedDevice != null &&
+            SamsungDeviceModelResolver.IsExperimentalDeXSupportedSamsungModel(SelectedDevice.ModelCode);
 
-        public bool IsMirroringMode => SelectedDevice != null && !SelectedDevice.IsDexSupported;
+        public bool IsExperimentalDexActive => SelectedDevice != null &&
+            !SelectedDevice.IsDexSupported &&
+            ExperimentalDex &&
+            IsExperimentalDexEligible;
+
+        public bool IsDexMode => SelectedDevice != null && (SelectedDevice.IsDexSupported || IsExperimentalDexActive);
+
+        public bool IsMirroringMode => SelectedDevice != null && !IsDexMode;
 
         public string StartSessionButtonText => IsMirroringMode
             ? LocalizationManager.Instance.GetString("Action_StartMirroring")
@@ -702,7 +726,11 @@ namespace ScrcpyDex.App.ViewModels
         }
 
         public string ConnectionDetailsText => HasSelectedDevice
-            ? (IsDexMode ? "USB Link Active • Direct Link" : $"{SelectedDevice?.MarketingName} • Screen Mirroring Mode")
+            ? (IsDexMode
+                ? (SelectedDevice!.DeXDisplayId > 0
+                    ? $"DeX Display {SelectedDevice.DeXDisplayId} • Direct Link"
+                    : "DeX Ready • Direct Link")
+                : $"{SelectedDevice?.MarketingName} • Screen Mirroring Mode")
             : "Connect phone via USB with USB debugging enabled";
 
         public string HardwareModelDisplay => HasSelectedDevice && !string.IsNullOrWhiteSpace(HardwareModel) && HardwareModel != "--"
@@ -907,6 +935,7 @@ namespace ScrcpyDex.App.ViewModels
             ForwardShortcuts = settings.Input.ForwardShortcuts;
             StayAwake = settings.Device.StayAwake;
             TurnScreenOff = settings.Device.TurnScreenOff;
+            ExperimentalDex = settings.Device.ExperimentalDex;
             LowLatencyAudio = settings.Audio.Enabled;
             Fullscreen = settings.Display.WindowMode.Equals("fullscreen", StringComparison.OrdinalIgnoreCase);
 
@@ -1000,6 +1029,7 @@ namespace ScrcpyDex.App.ViewModels
                 settings.Audio.Enabled = LowLatencyAudio;
                 settings.Device.StayAwake = StayAwake;
                 settings.Device.TurnScreenOff = TurnScreenOff;
+                settings.Device.ExperimentalDex = ExperimentalDex;
                 settings.Paths.ScrcpyPath = ScrcpyPath;
                 settings.Paths.AdbPath = AdbPath;
 
@@ -1084,6 +1114,7 @@ namespace ScrcpyDex.App.ViewModels
 
         partial void OnSelectedDeviceChanged(DeviceInfo? value)
         {
+            DexActivationStatusText = string.Empty;
             UpdateDeviceImage(value);
             if (value != null && value.IsConnected)
             {
@@ -2050,50 +2081,125 @@ namespace ScrcpyDex.App.ViewModels
                 var displaySection = BuildDisplaySection();
 
                 int effectiveDisplayId = 0;
+                bool experimentalDexSession = ExperimentalDex &&
+                    SamsungDeviceModelResolver.IsExperimentalDeXSupportedSamsungModel(SelectedDevice.ModelCode) &&
+                    !SelectedDevice.IsDexSupported;
+                bool dexSessionRequested = SelectedDevice.IsDexSupported || experimentalDexSession;
+                string sessionSerial = SelectedDevice.Serial;
 
-                if (SelectedDevice.IsDexSupported)
+                _activeSessionSerial = sessionSerial;
+                _activeSessionRequiresDexCleanup = dexSessionRequested;
+
+                if (dexSessionRequested)
                 {
-                    LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Starting Samsung DeX session for device {SelectedDevice.Model}...", false));
+                    LogEntries.Push(new ProcessLogEntry(
+                        DateTime.Now,
+                        experimentalDexSession
+                            ? $"Starting experimental Samsung DeX session for OnigiriDeX target {SelectedDevice.Model}..."
+                            : $"Starting Samsung DeX session for device {SelectedDevice.Model}...",
+                        false));
 
                     // Step 1: Deploy server and activate DeX virtual display
                     await _stateMachine.FireAsync(SessionTrigger.DeviceReady, "Deploying DeX server").ConfigureAwait(false);
-                    int? displayId = await _adbService.DeployAndActivateDeXAsync(SelectedDevice.Serial).ConfigureAwait(false);
+                    int? displayId = null;
+                    string activationPath = "Samsung DeX loopback";
+
+                    try
+                    {
+                        displayId = await _adbService.DeployAndActivateDeXAsync(sessionSerial).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (experimentalDexSession)
+                    {
+                        LogEntries.Push(new ProcessLogEntry(
+                            DateTime.Now,
+                            $"Samsung DeX loopback activation was unavailable: {ex.Message}",
+                            ProcessLogLevel.Warning));
+                    }
+
+                    if (!displayId.HasValue)
+                    {
+                        displayId = await _adbService.FindDeXDisplayIdAsync(sessionSerial).ConfigureAwait(false);
+                    }
+
+                    if (!displayId.HasValue && experimentalDexSession)
+                    {
+                        int fallbackWidth = 1920;
+                        int fallbackHeight = 1080;
+                        if (ScrcpyExecutionService.TryResolveDisplayDimensions(displaySection, out int configuredWidth, out int configuredHeight))
+                        {
+                            fallbackWidth = configuredWidth;
+                            fallbackHeight = configuredHeight;
+                        }
+
+                        DexActivationStatusText = "Samsung activation unavailable. Checking OnigiriDeX desktop mode...";
+                        LogEntries.Push(new ProcessLogEntry(
+                            DateTime.Now,
+                            "Samsung DeX loopback did not expose a display. Checking the ROM desktop-mode interface...",
+                            ProcessLogLevel.Warning));
+
+                        displayId = await _adbService.ActivateExperimentalDesktopModeAsync(
+                            sessionSerial,
+                            fallbackWidth,
+                            fallbackHeight,
+                            SelectedDpi,
+                            CancellationToken.None).ConfigureAwait(false);
+                        activationPath = "OnigiriDeX desktop-mode fallback";
+                    }
 
                     if (!displayId.HasValue || displayId.Value < 0)
                     {
-                        string errMsg = "Failed to allocate Samsung DeX virtual display ID.";
-                        LogEntries.Push(new ProcessLogEntry(DateTime.Now, errMsg, true));
-                        await _stateMachine.FireAsync(SessionTrigger.ErrorOccurred, errMsg).ConfigureAwait(false);
-                        return;
-                    }
-
-                    effectiveDisplayId = displayId.Value;
-                    SelectedDevice.DeXDisplayId = effectiveDisplayId;
-                    LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"DeX virtual display allocated successfully (Display ID: {effectiveDisplayId})", false));
-
-                    if (effectiveDisplayId > 0 &&
-                        ScrcpyExecutionService.TryResolveDisplayDimensions(displaySection, out int targetWidth, out int targetHeight))
-                    {
-                        bool sizeApplied = await _adbService.SetDisplaySizeAsync(SelectedDevice.Serial, effectiveDisplayId, targetWidth, targetHeight).ConfigureAwait(false);
-                        if (sizeApplied)
+                        if (experimentalDexSession)
                         {
-                            LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Applied virtual display resolution: {targetWidth}x{targetHeight} (Display ID: {effectiveDisplayId})", false));
+                            DexActivationStatusText = "Experimental DeX unavailable • Mirroring Display 0";
+                            LogEntries.Push(new ProcessLogEntry(
+                                DateTime.Now,
+                                "Experimental DeX activation was unavailable. Falling back to standard screen mirroring on Display 0.",
+                                ProcessLogLevel.Warning));
+                            await _stateMachine.FireAsync(SessionTrigger.ServerDeployed, "Experimental DeX unavailable; Display 0 fallback selected").ConfigureAwait(false);
+                            effectiveDisplayId = 0;
+                        }
+                        else
+                        {
+                            string errMsg = "Failed to allocate Samsung DeX virtual display ID.";
+                            LogEntries.Push(new ProcessLogEntry(DateTime.Now, errMsg, true));
+                            await _stateMachine.FireAsync(SessionTrigger.ErrorOccurred, errMsg).ConfigureAwait(false);
+                            await CleanupFailedSessionStartAsync(sessionSerial).ConfigureAwait(false);
+                            return;
                         }
                     }
-
-                    if (SelectedDpi >= 72 && SelectedDpi <= 640 && effectiveDisplayId > 0)
+                    else
                     {
-                        bool dpiApplied = await _adbService.SetDisplayDpiAsync(SelectedDevice.Serial, effectiveDisplayId, SelectedDpi).ConfigureAwait(false);
-                        if (dpiApplied)
-                        {
-                            LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Applied virtual display density: {SelectedDpi} DPI (Display ID: {effectiveDisplayId})", false));
-                        }
-                    }
+                        effectiveDisplayId = displayId.Value;
+                        SelectedDevice.DeXDisplayId = effectiveDisplayId;
+                        DexActivationStatusText = $"{activationPath} active • Display {effectiveDisplayId}";
+                        OnPropertyChanged(nameof(ConnectionDetailsText));
+                        LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"DeX virtual display allocated successfully (Display ID: {effectiveDisplayId}, Path: {activationPath})", false));
 
-                    await _stateMachine.FireAsync(SessionTrigger.ServerDeployed, $"Display ID: {effectiveDisplayId} allocated").ConfigureAwait(false);
+                        if (effectiveDisplayId > 0 &&
+                            ScrcpyExecutionService.TryResolveDisplayDimensions(displaySection, out int targetWidth, out int targetHeight))
+                        {
+                            bool sizeApplied = await _adbService.SetDisplaySizeAsync(sessionSerial, effectiveDisplayId, targetWidth, targetHeight).ConfigureAwait(false);
+                            if (sizeApplied)
+                            {
+                                LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Applied virtual display resolution: {targetWidth}x{targetHeight} (Display ID: {effectiveDisplayId})", false));
+                            }
+                        }
+
+                        if (SelectedDpi >= 72 && SelectedDpi <= 640 && effectiveDisplayId > 0)
+                        {
+                            bool dpiApplied = await _adbService.SetDisplayDpiAsync(sessionSerial, effectiveDisplayId, SelectedDpi).ConfigureAwait(false);
+                            if (dpiApplied)
+                            {
+                                LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Applied virtual display density: {SelectedDpi} DPI (Display ID: {effectiveDisplayId})", false));
+                            }
+                        }
+
+                        await _stateMachine.FireAsync(SessionTrigger.ServerDeployed, $"Display ID: {effectiveDisplayId} allocated").ConfigureAwait(false);
+                    }
                 }
                 else
                 {
+                    DexActivationStatusText = string.Empty;
                     LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Non-DeX device detected ({SelectedDevice.MarketingName}). Starting screen mirroring on Display 0...", ProcessLogLevel.Warning));
                     await _stateMachine.FireAsync(SessionTrigger.DeviceReady, "Preparing screen mirroring").ConfigureAwait(false);
                     await _stateMachine.FireAsync(SessionTrigger.ServerDeployed, "Display 0 target selected").ConfigureAwait(false);
@@ -2130,27 +2236,29 @@ namespace ScrcpyDex.App.ViewModels
                     Bitrate = BitrateMbps * 1_000_000,
                     Codec = SelectedCodec,
                     WindowMode = Fullscreen ? "fullscreen" : "normal",
-                    MouseDriver = ResolveEffectiveMouseDriver(),
+                    MouseDriver = experimentalDexSession ? "uhid" : ResolveEffectiveMouseDriver(),
                     StayAwake = StayAwake,
                     TurnScreenOff = TurnScreenOff,
                     RecordFile = recordFile,
-                    ForwardShortcuts = ForwardShortcuts,
+                    ForwardShortcuts = experimentalDexSession || ForwardShortcuts,
                     AudioEnabled = LowLatencyAudio && !SelectedAudioCodec.Equals("Disabled", StringComparison.OrdinalIgnoreCase),
                     RenderDriver = renderDriver
                 };
 
-                bool execOk = await _executionService.StartAsync(displayConfig, SelectedDevice.Serial, effectiveDisplayId).ConfigureAwait(false);
+                bool execOk = await _executionService.StartAsync(displayConfig, sessionSerial, effectiveDisplayId).ConfigureAwait(false);
                 if (!execOk)
                 {
                     string errMsg = "scrcpy launch failed or exited prematurely.";
                     LogEntries.Push(new ProcessLogEntry(DateTime.Now, errMsg, true));
                     await _stateMachine.FireAsync(SessionTrigger.ErrorOccurred, errMsg).ConfigureAwait(false);
+                    await CleanupFailedSessionStartAsync(sessionSerial).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
                 LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Exception starting session: {ex.Message}", true));
                 await _stateMachine.FireAsync(SessionTrigger.ErrorOccurred, ex.Message).ConfigureAwait(false);
+                await CleanupFailedSessionStartAsync(_activeSessionSerial).ConfigureAwait(false);
             }
             finally
             {
@@ -2162,6 +2270,29 @@ namespace ScrcpyDex.App.ViewModels
         public async Task StopSessionAsync()
         {
             await PerformFullTeardownAsync("User requested session stop").ConfigureAwait(false);
+        }
+
+        private async Task CleanupFailedSessionStartAsync(string? serial)
+        {
+            try
+            {
+                if (_activeSessionRequiresDexCleanup && !string.IsNullOrWhiteSpace(serial))
+                {
+                    await _adbService.StopDeXSessionAsync(serial).ConfigureAwait(false);
+                }
+            }
+            catch (Exception cleanupEx)
+            {
+                LogEntries.Push(new ProcessLogEntry(
+                    DateTime.Now,
+                    $"Failed to clean up device resources after session start failure: {cleanupEx.Message}",
+                    true));
+            }
+            finally
+            {
+                _activeSessionSerial = null;
+                _activeSessionRequiresDexCleanup = false;
+            }
         }
 
         private async Task PerformFullTeardownAsync(string reason)
@@ -2179,12 +2310,20 @@ namespace ScrcpyDex.App.ViewModels
                 await _executionService.StopAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
 
                 // Step 2: Unregister virtual display and reset server on phone via ADB
-                string? serial = SelectedDevice?.Serial;
-                bool isDex = SelectedDevice?.IsDexSupported ?? false;
+                string? serial = _activeSessionSerial ?? SelectedDevice?.Serial;
+                bool isDex = _activeSessionRequiresDexCleanup;
                 if (!string.IsNullOrWhiteSpace(serial) && isDex)
                 {
                     await _adbService.StopDeXSessionAsync(serial).ConfigureAwait(false);
+                    if (SelectedDevice != null &&
+                        string.Equals(SelectedDevice.Serial, serial, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SelectedDevice.DeXDisplayId = -1;
+                    }
                 }
+
+                DexActivationStatusText = string.Empty;
+                OnPropertyChanged(nameof(ConnectionDetailsText));
 
                 // Step 3: Reset state machine to Idle
                 await _stateMachine.FireAsync(SessionTrigger.Reset, "Teardown completed cleanly").ConfigureAwait(false);
@@ -2198,6 +2337,8 @@ namespace ScrcpyDex.App.ViewModels
             }
             finally
             {
+                _activeSessionSerial = null;
+                _activeSessionRequiresDexCleanup = false;
                 _sessionLock.Release();
             }
         }

@@ -59,6 +59,26 @@ namespace ScrcpyDex.Core.Tests
             Assert.Equal(5, displayId);
         }
 
+        [Fact]
+        public void ParseDeXDisplayId_InactiveOnigiriDesktopDisplay_ReturnsNull()
+        {
+            const string dumpsysOutput = "DisplayInfo{\"Desktop\", displayId 2, type VIRTUAL, state OFF, FLAG_DESKTOP_DISPLAY}";
+
+            int? displayId = AdbService.ParseDeXDisplayId(dumpsysOutput);
+
+            Assert.Null(displayId);
+        }
+
+        [Fact]
+        public void ParseDeXDisplayId_ActiveOnigiriDesktopDisplay_ReturnsDisplayId()
+        {
+            const string dumpsysOutput = "DisplayInfo{\"Desktop\", displayId 2, type VIRTUAL, state ON, FLAG_DESKTOP_DISPLAY}";
+
+            int? displayId = AdbService.ParseDeXDisplayId(dumpsysOutput);
+
+            Assert.Equal(2, displayId);
+        }
+
         [Theory]
         [InlineData(null)]
         [InlineData("")]
@@ -71,6 +91,19 @@ namespace ScrcpyDex.Core.Tests
             int? displayId = AdbService.ParseDeXDisplayId(output!);
 
             Assert.Null(displayId);
+        }
+
+        [Fact]
+        public void ParseDisplayIds_CollectsDistinctDisplayIdsFromKnownDumpsysFormats()
+        {
+            const string dumpsysOutput = "DisplayInfo{\"Built-in Screen\", displayId 0}\n" +
+                                         "DisplayInfo{\"Overlay #1\", displayId 3}\n" +
+                                         "mDisplayId=3\n" +
+                                         "mDisplayId=7";
+
+            var displayIds = AdbService.ParseDisplayIds(dumpsysOutput);
+
+            Assert.Equal(new[] { 0, 3, 7 }, displayIds.OrderBy(id => id));
         }
 
         [Theory]

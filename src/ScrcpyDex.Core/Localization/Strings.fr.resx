@@ -485,6 +485,12 @@
   <data name="QuickOptions_StayAwake" xml:space="preserve">
     <value>Garder l'appareil actif</value>
   </data>
+  <data name="QuickOptions_ExperimentalDex" xml:space="preserve">
+    <value>DeX expérimental (OnigiriDeX)</value>
+  </data>
+  <data name="QuickOptions_ExperimentalDex_Desc" xml:space="preserve">
+    <value>Active les tentatives DeX sur les ROM personnalisées compatibles du Galaxy Z Flip5.</value>
+  </data>
   <data name="QuickOptions_StayAwake_Desc" xml:space="preserve">
     <value>Empêche la mise en veille d'Android pendant la session</value>
   </data>

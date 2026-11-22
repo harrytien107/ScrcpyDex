@@ -80,7 +80,12 @@
       "properties": {
         "turnScreenOff": { "type": "boolean" },
         "stayAwake": { "type": "boolean" },
-        "autoConnect": { "type": "boolean" }
+        "autoConnect": { "type": "boolean" },
+        "experimentalDex": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to experimental DeX activation for supported custom-ROM devices such as OnigiriDeX on Galaxy Z Flip5"
+        }
       }
     },
     "paths": {

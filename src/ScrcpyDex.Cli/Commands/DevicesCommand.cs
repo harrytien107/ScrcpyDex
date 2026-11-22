@@ -64,9 +64,17 @@ namespace ScrcpyDex.Cli.Commands
                 {
                     compatDisplay = AnsiConsole.Colorize("[UNAUTHORIZED - Check device prompt]", AnsiConsole.Red);
                 }
-                else if (isSamsung)
+                else if (d.IsDexSupported)
                 {
                     compatDisplay = AnsiConsole.Colorize("[Samsung DeX Compatible]", AnsiConsole.Green);
+                }
+                else if (SamsungDeviceModelResolver.IsExperimentalDeXSupportedSamsungModel(d.ModelCode))
+                {
+                    compatDisplay = AnsiConsole.Colorize("[Experimental DeX available]", AnsiConsole.Yellow);
+                }
+                else if (isSamsung)
+                {
+                    compatDisplay = AnsiConsole.Colorize("[Samsung screen mirroring]", AnsiConsole.Gray);
                 }
                 else
                 {
