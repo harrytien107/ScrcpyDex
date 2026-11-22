@@ -422,6 +422,14 @@ namespace ScrcpyDex.Services
                 args.Add($"--mouse={mouseDriver}");
             }
 
+            // scrcpy's SDK mouse defaults right-click to Android BACK. On the
+            // OnigiriDeX desktop, secondary clicks must reach Android unchanged
+            // so DeX can open its native context menus.
+            if (IsMouseDrivenDexKeyboardCaptureSession(settings, displayId))
+            {
+                args.Add("--mouse-bind=++++:++++");
+            }
+
             // Video Bitrate
             int bitrate = settings.Display?.Bitrate ?? 8000000;
             if (bitrate > 0)

@@ -324,6 +324,20 @@ namespace ScrcpyDex.Core.Tests
 
             Assert.Contains("--keyboard=sdk", args);
             Assert.Contains("--shortcut-mod=rctrl", args);
+            Assert.DoesNotContain("--mouse-bind=++++:++++", args);
+        }
+
+        [Fact]
+        public void BuildArgumentsList_WithExperimentalDexSdkSecondaryDisplay_ForwardsRightClickToAndroid()
+        {
+            var settings = new ScrcpyDeXSettings();
+            settings.Device.ExperimentalDex = true;
+            settings.Input.MouseDriver = "sdk";
+            settings.Input.ForwardShortcuts = false;
+
+            List<string> args = ScrcpyExecutionService.BuildArgumentsList(settings, displayId: 2);
+
+            Assert.Contains("--mouse-bind=++++:++++", args);
         }
 
         [Fact]
