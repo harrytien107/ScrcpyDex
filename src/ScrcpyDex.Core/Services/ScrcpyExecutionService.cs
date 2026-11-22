@@ -180,6 +180,27 @@ namespace ScrcpyDex.Services
                 psi.WorkingDirectory = Path.GetDirectoryName(scrcpyPath) ?? AppContext.BaseDirectory;
             }
 
+            if (IsMouseDrivenDexKeyboardCaptureSession(settings, effectiveDisplayId) && File.Exists(scrcpyPath))
+            {
+                string? scrcpyDirectory = Path.GetDirectoryName(scrcpyPath);
+                string sourceServerPath = Path.Combine(scrcpyDirectory ?? AppContext.BaseDirectory, "scrcpy-server");
+                if (ScrcpyServerMousePatch.TryCreatePatchedServer(sourceServerPath, out string patchedServerPath, out string? patchError))
+                {
+                    psi.Environment["SCRCPY_SERVER_PATH"] = patchedServerPath;
+                    LogReceived?.Invoke(this, new ProcessLogEntry(
+                        DateTime.Now,
+                        $"OnigiriDeX native mouse injection enabled using patched scrcpy-server for Display {effectiveDisplayId}.",
+                        ProcessLogLevel.Info));
+                }
+                else
+                {
+                    LogReceived?.Invoke(this, new ProcessLogEntry(
+                        DateTime.Now,
+                        $"OnigiriDeX native mouse injection patch unavailable: {patchError}",
+                        ProcessLogLevel.Warning));
+                }
+            }
+
             foreach (string arg in argsList)
             {
                 psi.ArgumentList.Add(arg);
