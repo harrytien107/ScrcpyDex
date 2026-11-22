@@ -56,6 +56,7 @@ namespace ScrcpyDex.Services
 
         private Process? _currentProcess;
         private NonBlockingProcessStream? _processStream;
+        private WindowsAltTabForwarder? _altTabForwarder;
         private TaskCompletionSource<int>? _exitTcs;
         private readonly object _stateLock = new object();
         private bool _isDisposed;
@@ -213,6 +214,36 @@ namespace ScrcpyDex.Services
                     _processStream = processStream;
                 }
 
+                if (OperatingSystem.IsWindows() &&
+                    effectiveDisplayId is > 0 &&
+                    string.Equals(NormalizeMouseDriver(settings.Input?.MouseDriver), "sdk", StringComparison.OrdinalIgnoreCase))
+                {
+                    WindowsAltTabForwarder? altTabForwarder = null;
+                    try
+                    {
+                        altTabForwarder = new WindowsAltTabForwarder(process.Id);
+                        altTabForwarder.Start();
+
+                        lock (_stateLock)
+                        {
+                            _altTabForwarder = altTabForwarder;
+                        }
+
+                        LogReceived?.Invoke(this, new ProcessLogEntry(
+                            DateTime.Now,
+                            $"Windows Alt+Tab forwarding enabled for SDK input on Display {effectiveDisplayId.Value}.",
+                            ProcessLogLevel.Info));
+                    }
+                    catch (Exception ex)
+                    {
+                        altTabForwarder?.Dispose();
+                        LogReceived?.Invoke(this, new ProcessLogEntry(
+                            DateTime.Now,
+                            $"Windows Alt+Tab forwarding could not be enabled: {ex.Message}",
+                            ProcessLogLevel.Warning));
+                    }
+                }
+
                 // Monitor startup: if the process exits within 500ms, it failed to start
                 _ = Task.Run(async () =>
                 {
@@ -269,6 +300,7 @@ namespace ScrcpyDex.Services
         {
             Process? proc;
             NonBlockingProcessStream? stream;
+            WindowsAltTabForwarder? altTabForwarder;
 
             lock (_stateLock)
             {
@@ -276,7 +308,11 @@ namespace ScrcpyDex.Services
                 _stopping = true;
                 proc = _currentProcess;
                 stream = _processStream;
+                altTabForwarder = _altTabForwarder;
+                _altTabForwarder = null;
             }
+
+            altTabForwarder?.Dispose();
 
             TimeSpan effectiveTimeout = timeout ?? TimeSpan.FromMilliseconds(350);
 
@@ -448,6 +484,14 @@ namespace ScrcpyDex.Services
             else if (mouseDriver == "sdk")
             {
                 args.Add("--keyboard=sdk");
+            }
+
+            // Left Alt must reach Android for DeX Alt+Tab. On a secondary SDK display,
+            // move scrcpy's own shortcut modifier away from Alt so the Windows hook can
+            // suppress the host task switch and scrcpy can forward the real key chord.
+            if (displayId is > 0 && mouseDriver == "sdk")
+            {
+                args.Add("--shortcut-mod=rctrl");
             }
 
             // Window mode
@@ -729,6 +773,7 @@ namespace ScrcpyDex.Services
         private void OnProcessExitedInternal(object? sender, EventArgs e)
         {
             int exitCode = -1;
+            WindowsAltTabForwarder? altTabForwarder;
             try
             {
                 if (sender is Process proc && proc.HasExited)
@@ -740,11 +785,15 @@ namespace ScrcpyDex.Services
 
             lock (_stateLock)
             {
+                altTabForwarder = _altTabForwarder;
+                _altTabForwarder = null;
                 _currentProcess = null;
                 _processStream = null;
                 _stopping = false;
                 _streamingStartedFired = false;
             }
+
+            altTabForwarder?.Dispose();
 
             _exitTcs?.TrySetResult(exitCode);
             ProcessExited?.Invoke(this, exitCode);

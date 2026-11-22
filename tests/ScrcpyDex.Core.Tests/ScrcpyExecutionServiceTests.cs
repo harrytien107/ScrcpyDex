@@ -314,6 +314,19 @@ namespace ScrcpyDex.Core.Tests
         }
 
         [Fact]
+        public void BuildArgumentsList_WithSdkSecondaryDisplay_ReservesAltForAndroid()
+        {
+            var settings = new ScrcpyDeXSettings();
+            settings.Input.MouseDriver = "sdk";
+            settings.Input.ForwardShortcuts = false;
+
+            List<string> args = ScrcpyExecutionService.BuildArgumentsList(settings, displayId: 2);
+
+            Assert.Contains("--keyboard=sdk", args);
+            Assert.Contains("--shortcut-mod=rctrl", args);
+        }
+
+        [Fact]
         public void BuildArgumentsList_WithLabeledResolution_ParsesMaxSizeCorrectly()
         {
             var settings = new ScrcpyDeXSettings();
