@@ -69,5 +69,21 @@ namespace ScrcpyDex.Core.Tests
             Assert.True(Path.IsPathRooted(logDir));
             Assert.True(Path.IsPathRooted(cacheDir));
         }
+
+        [Fact]
+        public void WindowsDirectories_StayInsideApplicationDirectory()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+            var paths = DefaultPlatformPaths.Instance;
+
+            Assert.Equal(Path.Combine(baseDirectory, "config"), Path.GetFullPath(paths.GetConfigDirectory()));
+            Assert.Equal(Path.Combine(baseDirectory, "logs"), Path.GetFullPath(paths.GetLogDirectory()));
+            Assert.Equal(Path.Combine(baseDirectory, "cache"), Path.GetFullPath(paths.GetCacheDirectory()));
+        }
     }
 }

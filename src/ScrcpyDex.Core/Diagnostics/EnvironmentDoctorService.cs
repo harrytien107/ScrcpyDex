@@ -66,10 +66,12 @@ namespace ScrcpyDex.Core.Diagnostics
                 {
                     Name = "scrcpy Executable",
                     Status = DiagnosticStatus.Error,
-                    Summary = "scrcpy binary could not be located in system PATH or standard directories.",
+                    Summary = OperatingSystem.IsWindows()
+                        ? "Portable scrcpy binary could not be located in the ScrcpyDeX application folder."
+                        : "scrcpy binary could not be located in system PATH or standard directories.",
                     Details = "ScrcpyDeX depends on the scrcpy streaming engine.",
                     Remediation = OperatingSystem.IsWindows()
-                        ? "Install official scrcpy (>= 2.4) or select scrcpy.exe using the Scrcpy path picker."
+                        ? "Place the complete official scrcpy distribution in the 'scrcpy' folder next to ScrcpyDex.App.exe."
                         : "Install official scrcpy (version >= 2.4):\n  Download official release or deploy to /usr/local/bin/scrcpy."
                 };
             }
@@ -103,7 +105,9 @@ namespace ScrcpyDex.Core.Diagnostics
                 Status = DiagnosticStatus.Error,
                 Summary = $"scrcpy version {ver} is incompatible (required: >= 2.4.0).",
                 Details = $"Binary located at '{path}'. Upstream version < 2.4 lacks --mouse=uhid and --display-id flags.",
-                Remediation = "Install official upstream scrcpy >= 2.4."
+                Remediation = OperatingSystem.IsWindows()
+                    ? "Replace the bundled 'scrcpy' folder with an official scrcpy release >= 2.4."
+                    : "Install official upstream scrcpy >= 2.4."
             };
         }
 
@@ -134,7 +138,7 @@ namespace ScrcpyDex.Core.Diagnostics
                 Summary = "adb binary could not be resolved.",
                 Details = "Required for device enumeration and DeX server deployment.",
                 Remediation = OperatingSystem.IsWindows()
-                    ? "Ensure adb.exe is in PATH, alongside scrcpy.exe, or install Android platform-tools."
+                    ? "Ensure the bundled 'scrcpy' folder next to ScrcpyDex.App.exe contains adb.exe."
                     : "Install ADB:\n  sudo apt install adb (or install Android platform-tools)."
             };
         }

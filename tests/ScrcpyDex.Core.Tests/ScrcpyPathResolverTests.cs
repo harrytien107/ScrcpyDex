@@ -20,6 +20,16 @@ namespace ScrcpyDex.Core.Tests
 {
     public class ScrcpyPathResolverTests
     {
+        private static string CreateTestDirectory(string prefix)
+        {
+            string root = OperatingSystem.IsWindows()
+                ? AppContext.BaseDirectory
+                : System.IO.Path.GetTempPath();
+            string path = System.IO.Path.Combine(root, prefix + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(path);
+            return path;
+        }
+
         [Theory]
         [InlineData("scrcpy 2.4 <https://github.com/Genymobile/scrcpy>", "2.4")]
         [InlineData("scrcpy 5.0", "5.0")]
@@ -74,8 +84,7 @@ namespace ScrcpyDex.Core.Tests
         [Fact]
         public void TryResolveAdbExecutable_WithSiblingAdbNextToScrcpy_ResolvesSiblingAdb()
         {
-            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ScrcpyDeX_Test_" + Guid.NewGuid().ToString("N"));
-            System.IO.Directory.CreateDirectory(tempDir);
+            string tempDir = CreateTestDirectory("ScrcpyDeX_Test_");
             try
             {
                 string scrcpyBin = OperatingSystem.IsWindows() ? "scrcpy.exe" : "scrcpy";
@@ -100,8 +109,7 @@ namespace ScrcpyDex.Core.Tests
         [Fact]
         public void TryResolveScrcpyExecutable_WithCustomDirectoryPath_ResolvesScrcpyInsideDirectory()
         {
-            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ScrcpyDeX_Test_" + Guid.NewGuid().ToString("N"));
-            System.IO.Directory.CreateDirectory(tempDir);
+            string tempDir = CreateTestDirectory("ScrcpyDeX_Test_");
             try
             {
                 string scrcpyBin = OperatingSystem.IsWindows() ? "scrcpy.exe" : "scrcpy";
@@ -120,6 +128,38 @@ namespace ScrcpyDex.Core.Tests
         }
 
         [Fact]
+        public void WindowsCustomExecutablesOutsideApplicationDirectory_AreRejected()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            string outsideDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "ScrcpyDeX_Outside_" + Guid.NewGuid().ToString("N")));
+            System.IO.Directory.CreateDirectory(outsideDir);
+
+            try
+            {
+                string scrcpy = System.IO.Path.Combine(outsideDir, "scrcpy.exe");
+                string adb = System.IO.Path.Combine(outsideDir, "adb.exe");
+                System.IO.File.WriteAllText(scrcpy, string.Empty);
+                System.IO.File.WriteAllText(adb, string.Empty);
+
+                Assert.False(ScrcpyPathResolver.IsValidCustomScrcpyPath(scrcpy));
+                Assert.False(ScrcpyPathResolver.IsValidCustomAdbPath(adb));
+                Assert.False(ScrcpyPathResolver.TryValidateScrcpyExecutable(scrcpy, out _));
+                Assert.False(ScrcpyPathResolver.TryValidateAdbExecutable(adb));
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(outsideDir, true); } catch { }
+            }
+        }
+
+        [Fact]
         public void IsSelfExecutable_WithCurrentProcessPath_ReturnsTrue()
         {
             string? processPath = Environment.ProcessPath;
@@ -128,7 +168,7 @@ namespace ScrcpyDex.Core.Tests
                 Assert.True(ScrcpyPathResolver.IsSelfExecutable(processPath));
             }
 
-            string tempRoot = System.IO.Path.GetTempPath();
+            string tempRoot = OperatingSystem.IsWindows() ? AppContext.BaseDirectory : System.IO.Path.GetTempPath();
             Assert.True(ScrcpyPathResolver.IsSelfExecutable(System.IO.Path.Combine(tempRoot, "ScrcpyDex.App.exe")));
             Assert.True(ScrcpyPathResolver.IsSelfExecutable(System.IO.Path.Combine(tempRoot, "ScrcpyDex.App")));
             Assert.False(ScrcpyPathResolver.IsSelfExecutable(System.IO.Path.Combine(tempRoot, "adb.exe")));
@@ -138,8 +178,7 @@ namespace ScrcpyDex.Core.Tests
         [Fact]
         public void TryResolveExecutables_WithArbitraryExecutableName_IgnoresInvalidCustomPath()
         {
-            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ScrcpyDeX_TestInvalid_" + Guid.NewGuid().ToString("N"));
-            System.IO.Directory.CreateDirectory(tempDir);
+            string tempDir = CreateTestDirectory("ScrcpyDeX_TestInvalid_");
             try
             {
                 string arbitraryExe = System.IO.Path.Combine(tempDir, "notepad.exe");

@@ -180,6 +180,9 @@ namespace ScrcpyDex.Services
                 psi.WorkingDirectory = Path.GetDirectoryName(scrcpyPath) ?? AppContext.BaseDirectory;
             }
 
+            string adbPath = ScrcpyPathResolver.ResolveAdbExecutable(settings.Paths?.AdbPath, scrcpyPath);
+            PortableProcessEnvironment.ApplyAdbEnvironment(psi, adbPath);
+
             if (IsMouseDrivenDexKeyboardCaptureSession(settings, effectiveDisplayId) && File.Exists(scrcpyPath))
             {
                 string? scrcpyDirectory = Path.GetDirectoryName(scrcpyPath);

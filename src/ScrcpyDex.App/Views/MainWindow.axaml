@@ -810,6 +810,7 @@
                                         <Button Grid.Column="1"
                                                 Classes="pill-button"
                                                 Command="{Binding BrowseScrcpyPathCommand}"
+                                                 IsVisible="{Binding CanBrowseBinaryPaths}"
                                                 VerticalAlignment="Center">
                                             <StackPanel Orientation="Horizontal" Spacing="5">
                                                 <PathIcon Data="{StaticResource Icon_Folder}" Width="10" Height="10" Foreground="#D0D0D7" />
@@ -831,6 +832,7 @@
                                         <Button Grid.Column="1"
                                                 Classes="pill-button"
                                                 Command="{Binding BrowseAdbPathCommand}"
+                                                 IsVisible="{Binding CanBrowseBinaryPaths}"
                                                 VerticalAlignment="Center">
                                             <StackPanel Orientation="Horizontal" Spacing="5">
                                                 <PathIcon Data="{StaticResource Icon_Folder}" Width="10" Height="10" Foreground="#D0D0D7" />
@@ -1204,7 +1206,7 @@
                         <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
                             <Button Classes="btn-primary"
                                     Command="{Binding BrowseScrcpyPathCommand}"
-                                    IsVisible="{Binding !IsScrcpyDetected}"
+                                    IsVisible="{Binding CanLocateScrcpyBinary}"
                                     Height="32"
                                     Padding="12,0"
                                     Margin="0,0,6,6">
@@ -1213,7 +1215,7 @@
 
                             <Button Classes="btn-primary"
                                     Command="{Binding BrowseAdbPathCommand}"
-                                    IsVisible="{Binding !IsAdbDetected}"
+                                    IsVisible="{Binding CanLocateAdbBinary}"
                                     Height="32"
                                     Padding="12,0"
                                     Margin="0,0,6,6">

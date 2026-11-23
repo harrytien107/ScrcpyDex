@@ -16,58 +16,19 @@ echo [1/2] Terminating ScrcpyDeX client processes (scrcpy)...
 REM Scope process termination strictly to scrcpy.exe instances launched by ScrcpyDeX.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='scrcpy.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--window-title=ScrcpyDeX' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
-REM Resolve adb executable location dynamically
-set "ADB_EXE="
-for /f "delims=" %%I in ('where adb.exe 2^>nul') do (
-    if not defined ADB_EXE set "ADB_EXE=%%I"
-)
+REM Resolve adb only from the portable ScrcpyDeX directory.
+set "ADB_EXE=%~dp0scrcpy\adb.exe"
+if not exist "%ADB_EXE%" set "ADB_EXE=%~dp0adb.exe"
 
-if not defined ADB_EXE (
-    for /f "delims=" %%I in ('where scrcpy.exe 2^>nul') do (
-        if not defined ADB_EXE if exist "%%~dpIadb.exe" set "ADB_EXE=%%~dpIadb.exe"
-    )
-)
-
-if not defined ADB_EXE if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\adb.exe" (
-    set "ADB_EXE=%LOCALAPPDATA%\Microsoft\WinGet\Links\adb.exe"
-)
-
-if not defined ADB_EXE if exist "%LOCALAPPDATA%\Microsoft\WinGet\Packages" (
-    for /d %%P in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\Genymobile.scrcpy*") do (
-        if not defined ADB_EXE if exist "%%~fP\adb.exe" (
-            set "ADB_EXE=%%~fP\adb.exe"
-        )
-        if not defined ADB_EXE (
-            for /d %%S in ("%%~fP\scrcpy-*") do (
-                if not defined ADB_EXE if exist "%%~fS\adb.exe" (
-                    set "ADB_EXE=%%~fS\adb.exe"
-                )
-            )
-        )
-    )
-)
-
-if not defined ADB_EXE if exist "%USERPROFILE%\scoop\apps\scrcpy\current\adb.exe" (
-    set "ADB_EXE=%USERPROFILE%\scoop\apps\scrcpy\current\adb.exe"
-)
-if not defined ADB_EXE if exist "%USERPROFILE%\scoop\apps\adb\current\adb.exe" (
-    set "ADB_EXE=%USERPROFILE%\scoop\apps\adb\current\adb.exe"
-)
-if not defined ADB_EXE if exist "%ProgramData%\chocolatey\bin\adb.exe" (
-    set "ADB_EXE=%ProgramData%\chocolatey\bin\adb.exe"
-)
-if not defined ADB_EXE if exist "%ProgramFiles%\scrcpy\adb.exe" (
-    set "ADB_EXE=%ProgramFiles%\scrcpy\adb.exe"
-)
-if not defined ADB_EXE if exist "%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe" (
-    set "ADB_EXE=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
-)
-
-if not defined ADB_EXE (
-    echo [WARN] adb.exe not found in PATH or standard installation locations.
+if not exist "%ADB_EXE%" (
+    echo [WARN] Portable adb.exe not found next to ScrcpyDeX.
     echo        Skipping device-side DeX disconnect.
     goto :done
 )
+
+set "ANDROID_USER_HOME=%~dp0.android"
+set "ANDROID_SDK_HOME=%~dp0"
+set "HOME=%~dp0"
 
 set "ADB_TARGET="
 if defined TARGET_SERIAL set ADB_TARGET=-s "%TARGET_SERIAL%"

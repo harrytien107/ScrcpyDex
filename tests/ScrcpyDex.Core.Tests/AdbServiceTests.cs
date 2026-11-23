@@ -70,13 +70,35 @@ namespace ScrcpyDex.Core.Tests
         }
 
         [Fact]
-        public void ParseDeXDisplayId_ActiveOnigiriDesktopDisplay_ReturnsDisplayId()
+        public void ParseDeXDisplayId_ActiveOnigiriDesktopDisplay_ReturnsNull()
         {
             const string dumpsysOutput = "DisplayInfo{\"Desktop\", displayId 2, type VIRTUAL, state ON, FLAG_DESKTOP_DISPLAY}";
 
             int? displayId = AdbService.ParseDeXDisplayId(dumpsysOutput);
 
-            Assert.Equal(2, displayId);
+            Assert.Null(displayId);
+        }
+
+        [Fact]
+        public void ParseDeXDisplayId_DisplayBlocks_DoNotAssociateLaterScrcpyDeXNameWithDisplayZero()
+        {
+            const string dumpsysOutput =
+                "Display 0:\n  name=\"Built-in Screen\"\n" +
+                "Display 30:\n  name=\"ScrcpyDeX\"";
+
+            int? displayId = AdbService.ParseDeXDisplayId(dumpsysOutput);
+
+            Assert.Equal(30, displayId);
+        }
+
+        [Fact]
+        public void ParseDeXDisplayId_DesktopDisplayDeviceInfo_IsNotGenericDeXTrigger()
+        {
+            const string dumpsysOutput = "DisplayDeviceInfo{\"Desktop\", displayId 2, FLAG_DESKTOP_DISPLAY}";
+
+            int? displayId = AdbService.ParseDeXDisplayId(dumpsysOutput);
+
+            Assert.Null(displayId);
         }
 
         [Fact]
@@ -169,7 +191,10 @@ namespace ScrcpyDex.Core.Tests
         [Fact]
         public void ConfigurePaths_ResolvesSiblingAdbFromScrcpyPath()
         {
-            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ScrcpyDeX_AdbTest_" + System.Guid.NewGuid().ToString("N"));
+            string rootDir = System.OperatingSystem.IsWindows()
+                ? System.AppContext.BaseDirectory
+                : System.IO.Path.GetTempPath();
+            string tempDir = System.IO.Path.Combine(rootDir, "ScrcpyDeX_AdbTest_" + System.Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(tempDir);
             try
             {

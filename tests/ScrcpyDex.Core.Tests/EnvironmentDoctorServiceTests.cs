@@ -45,7 +45,10 @@ namespace ScrcpyDex.Core.Tests
         [Fact]
         public void CheckAdbInstallation_WithExistingCustomFile_ReturnsPass()
         {
-            string tempDir = Path.Combine(Path.GetTempPath(), "ScrcpyDeX_DoctorTest_" + Guid.NewGuid().ToString("N"));
+            string rootDir = OperatingSystem.IsWindows()
+                ? AppContext.BaseDirectory
+                : Path.GetTempPath();
+            string tempDir = Path.Combine(rootDir, "ScrcpyDeX_DoctorTest_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
             try
             {

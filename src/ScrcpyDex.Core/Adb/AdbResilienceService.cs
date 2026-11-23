@@ -198,6 +198,7 @@ namespace ScrcpyDex.Core.Adb
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            PortableProcessEnvironment.ApplyAdbEnvironment(psi, _adbPath);
 
             var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();

@@ -20,6 +20,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ScrcpyDex.Core.IO;
+using ScrcpyDex.Core.Platform;
 using ScrcpyDex.Models;
 
 namespace ScrcpyDex.Core.Adb
@@ -251,6 +252,7 @@ namespace ScrcpyDex.Core.Adb
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
+                PortableProcessEnvironment.ApplyAdbEnvironment(psi, adbPath);
 
                 using var proc = Process.Start(psi);
                 if (proc != null)

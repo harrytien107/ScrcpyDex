@@ -10,7 +10,8 @@
 param(
     [string]$Version = "2.1.0",
     [string]$Configuration = "Release",
-    [string]$OutputDir = ""
+    [string]$OutputDir = "",
+    [string]$ScrcpySourceDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,7 +40,31 @@ Write-Host "Repository:    $repoRoot"
 Write-Host "Output:        $OutputDir"
 Write-Host ""
 
-$stageDir = Join-Path ([System.IO.Path]::GetTempPath()) ("scrcpydex-win-stage-" + [System.Guid]::NewGuid().ToString("N"))
+if (-not $ScrcpySourceDir) {
+    $repoScrcpy = Join-Path $repoRoot "scrcpy"
+    if (Test-Path (Join-Path $repoScrcpy "scrcpy.exe")) {
+        $ScrcpySourceDir = $repoScrcpy
+    }
+    else {
+        $workspaceRoot = Split-Path -Parent $repoRoot
+        $ScrcpySourceDir = Get-ChildItem -Path $workspaceRoot -Directory -Filter "scrcpy-win64-*" -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "scrcpy.exe") } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
+}
+
+if (-not $ScrcpySourceDir -or
+    -not (Test-Path (Join-Path $ScrcpySourceDir "scrcpy.exe")) -or
+    -not (Test-Path (Join-Path $ScrcpySourceDir "adb.exe"))) {
+    throw "Portable scrcpy distribution not found or incomplete. Place it at '$repoRoot\scrcpy', beside the repository as 'scrcpy-win64-*', or pass -ScrcpySourceDir with a workspace-local folder containing scrcpy.exe and adb.exe."
+}
+
+$ScrcpySourceDir = (Resolve-Path $ScrcpySourceDir).Path
+Write-Host "scrcpy:       $ScrcpySourceDir"
+Write-Host ""
+
+$stageDir = Join-Path $OutputDir (".scrcpydex-win-stage-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
 try {
@@ -49,12 +74,6 @@ try {
     }
 
     $dotnetCmd = "dotnet"
-    if ($env:LOCALAPPDATA) {
-        $userDotnet = Join-Path $env:LOCALAPPDATA "Microsoft\dotnet\dotnet.exe"
-        if (Test-Path $userDotnet) {
-            $dotnetCmd = $userDotnet
-        }
-    }
 
     Write-Host "[1/4] Publishing ScrcpyDex.App (win-x64 single file)..." -ForegroundColor Yellow
     & $dotnetCmd publish $appProject `
@@ -127,6 +146,15 @@ try {
     Copy-IfNotSame (Join-Path $configDir "settings.json") (Join-Path $OutputDir "config\settings.json")
     Copy-IfNotSame (Join-Path $configDir "settings.schema.json") (Join-Path $stageDir "config\settings.schema.json")
     Copy-IfNotSame (Join-Path $configDir "settings.schema.json") (Join-Path $OutputDir "config\settings.schema.json")
+
+    # Portable scrcpy distribution. Keep the complete official folder because
+    # scrcpy depends on adjacent DLLs, adb, and its server payload.
+    $stageScrcpy = Join-Path $stageDir "scrcpy"
+    $outputScrcpy = Join-Path $OutputDir "scrcpy"
+    New-Item -ItemType Directory -Path $stageScrcpy -Force | Out-Null
+    New-Item -ItemType Directory -Path $outputScrcpy -Force | Out-Null
+    Copy-Item -Path (Join-Path $ScrcpySourceDir "*") -Destination $stageScrcpy -Recurse -Force
+    Copy-Item -Path (Join-Path $ScrcpySourceDir "*") -Destination $outputScrcpy -Recurse -Force
 
     # Copy published exe and pdb to output directory
     Copy-IfNotSame (Join-Path $stageDir "ScrcpyDex.App.exe") (Join-Path $OutputDir "ScrcpyDex.App.exe")

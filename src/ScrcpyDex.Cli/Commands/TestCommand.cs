@@ -18,6 +18,7 @@ using System.Threading.Tasks;
 using ScrcpyDex.Cli.Utils;
 using ScrcpyDex.Core.Configuration;
 using ScrcpyDex.Core.Diagnostics;
+using ScrcpyDex.Core.Platform;
 using ScrcpyDex.Platform.Linux;
 
 namespace ScrcpyDex.Cli.Commands
@@ -158,7 +159,11 @@ namespace ScrcpyDex.Cli.Commands
             // 6. Test Atomic JSON Config Repository
             await RunTestAsync("AtomicJsonConfigRepository Save & Load Cycle", async () =>
             {
-                string tempFile = Path.Combine(Path.GetTempPath(), $"scrcpydex_test_{Guid.NewGuid():N}.json");
+                string testDirectory = OperatingSystem.IsWindows()
+                    ? Path.Combine(DefaultPlatformPaths.Instance.GetCacheDirectory(), "self-test")
+                    : Path.GetTempPath();
+                Directory.CreateDirectory(testDirectory);
+                string tempFile = Path.Combine(testDirectory, $"scrcpydex_test_{Guid.NewGuid():N}.json");
                 try
                 {
                     var repo = new AtomicJsonConfigRepository<ScrcpyDeXSettings>(tempFile);

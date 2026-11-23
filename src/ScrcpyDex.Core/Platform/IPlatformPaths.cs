@@ -27,8 +27,8 @@ namespace ScrcpyDex.Core.Platform
     }
 
     /// <summary>
-    /// Default cross-platform implementation using XDG standards on Linux/macOS
-    /// and standard AppData locations on Windows.
+    /// Default cross-platform implementation using a portable application-local
+    /// layout on Windows and XDG standards on Linux/macOS.
     /// </summary>
     public class DefaultPlatformPaths : IPlatformPaths
     {
@@ -38,8 +38,7 @@ namespace ScrcpyDex.Core.Platform
         {
             if (OperatingSystem.IsWindows())
             {
-                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                return Path.Combine(appData, "ScrcpyDeX");
+                return Path.Combine(AppContext.BaseDirectory, "config");
             }
 
             // Linux / macOS XDG specification
@@ -57,8 +56,7 @@ namespace ScrcpyDex.Core.Platform
         {
             if (OperatingSystem.IsWindows())
             {
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                return Path.Combine(localAppData, "ScrcpyDeX", "Logs");
+                return Path.Combine(AppContext.BaseDirectory, "logs");
             }
 
             string? xdgState = Environment.GetEnvironmentVariable("XDG_STATE_HOME");
@@ -75,8 +73,7 @@ namespace ScrcpyDex.Core.Platform
         {
             if (OperatingSystem.IsWindows())
             {
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                return Path.Combine(localAppData, "ScrcpyDeX", "Cache");
+                return Path.Combine(AppContext.BaseDirectory, "cache");
             }
 
             string? xdgCache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");

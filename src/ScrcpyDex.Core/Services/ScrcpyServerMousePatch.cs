@@ -6,6 +6,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using ScrcpyDex.Core.Platform;
 
 namespace ScrcpyDex.Services
 {
@@ -46,7 +47,9 @@ namespace ScrcpyDex.Services
 
                 byte[] sourceBytes = File.ReadAllBytes(sourceServerPath);
                 string sourceHash = Convert.ToHexString(SHA256.HashData(sourceBytes)).Substring(0, 16);
-                string cacheDirectory = Path.Combine(Path.GetTempPath(), "ScrcpyDex", "OnigiriDeX");
+                string cacheDirectory = Path.Combine(
+                    DefaultPlatformPaths.Instance.GetCacheDirectory(),
+                    "OnigiriDeX");
                 Directory.CreateDirectory(cacheDirectory);
                 patchedServerPath = Path.Combine(cacheDirectory, $"scrcpy-server-native-mouse-v1-{sourceHash}");
 

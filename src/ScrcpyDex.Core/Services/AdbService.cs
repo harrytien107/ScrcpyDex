@@ -356,27 +356,32 @@ namespace ScrcpyDex.Services
             if (match1.Success && int.TryParse(match1.Groups[1].Value, out int id1))
                 return id1;
 
-            // OnigiriDeX exposes a persistent Android "Desktop" display even while desktop mode is idle.
-            // Treat it as usable only when dumpsys reports that logical display as ON.
-            var desktopMatch = Regex.Match(
+            // Pattern 2: Display N: ... mPrimaryDisplayDevice=ScrcpyDeX or name="ScrcpyDeX".
+            // Inspect each logical-display block independently so a token from Display 30 cannot
+            // accidentally be associated with an earlier Display 0 block.
+            foreach (Match displayBlock in Regex.Matches(
                 dumpsysOutput,
-                @"DisplayInfo\{""Desktop[^""]*"",\s*displayId\s+(\d+)[^\r\n]*\bstate\s+ON\b",
-                RegexOptions.IgnoreCase);
-            if (desktopMatch.Success && int.TryParse(desktopMatch.Groups[1].Value, out int desktopId))
-                return desktopId;
-
-            // Pattern 2: Display 2: ... mPrimaryDisplayDevice=ScrcpyDeX or name="ScrcpyDeX"
-            var match2 = Regex.Match(dumpsysOutput, @"Display\s+(\d+)[\s\S]*?(?:mPrimaryDisplayDevice=ScrcpyDeX|name=""ScrcpyDeX""|name=""Samsung DeX"")", RegexOptions.IgnoreCase);
-            if (match2.Success && int.TryParse(match2.Groups[1].Value, out int id2))
-                return id2;
+                @"(?ms)^\s*Display\s+(\d+)\s*:(.*?)(?=^\s*Display\s+\d+\s*:|\z)",
+                RegexOptions.IgnoreCase))
+            {
+                string blockText = displayBlock.Groups[2].Value;
+                if ((blockText.Contains("mPrimaryDisplayDevice=ScrcpyDeX", StringComparison.OrdinalIgnoreCase) ||
+                     blockText.Contains("name=\"ScrcpyDeX\"", StringComparison.OrdinalIgnoreCase) ||
+                     blockText.Contains("name=\"Samsung DeX\"", StringComparison.OrdinalIgnoreCase)) &&
+                    int.TryParse(displayBlock.Groups[1].Value, out int id2))
+                {
+                    return id2;
+                }
+            }
 
             // Pattern 3: DisplayDeviceInfo{"ScrcpyDeX"... displayId = 2 or displayId 2
-            var match3 = Regex.Match(dumpsysOutput, @"DisplayDeviceInfo\{""(?:ScrcpyDeX|Samsung DeX|Desktop)""[^}]*?displayId\s*[:=]?\s*(\d+)", RegexOptions.IgnoreCase);
+            var match3 = Regex.Match(dumpsysOutput, @"DisplayDeviceInfo\{""(?:ScrcpyDeX|Samsung DeX)""[^}]*?displayId\s*[:=]?\s*(\d+)", RegexOptions.IgnoreCase);
             if (match3.Success && int.TryParse(match3.Groups[1].Value, out int id3))
                 return id3;
 
-            // Pattern 4: mDisplayId=2 ... ScrcpyDeX
-            var match4 = Regex.Match(dumpsysOutput, @"mDisplayId=(\d+)[\s\S]{1,200}?(?:ScrcpyDeX|Samsung DeX)", RegexOptions.IgnoreCase);
+            // Pattern 4: mDisplayId=2 ... ScrcpyDeX on the same diagnostic line.
+            // Keeping this line-scoped prevents cross-display association in dumpsys output.
+            var match4 = Regex.Match(dumpsysOutput, @"mDisplayId=(\d+)[^\r\n]{1,200}?(?:ScrcpyDeX|Samsung DeX)", RegexOptions.IgnoreCase);
             if (match4.Success && int.TryParse(match4.Groups[1].Value, out int id4))
                 return id4;
 
@@ -472,6 +477,7 @@ namespace ScrcpyDex.Services
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
                 StandardErrorEncoding = System.Text.Encoding.UTF8
             };
+            PortableProcessEnvironment.ApplyAdbEnvironment(psi, _adbPath);
 
             var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             if (!proc.Start())
@@ -859,10 +865,11 @@ namespace ScrcpyDex.Services
 
             try
             {
-                // Step 2: Fallback broadcast to stop desktop mode launcher and terminate our server process.
-                // Do not kill generic scrcpy processes because they may belong to another session/tool.
+                // Step 2: Terminate only the server process owned by ScrcpyDeX. Do not send
+                // device-wide desktop-mode stop broadcasts here: an OnigiriDeX/Samsung desktop
+                // session may have existed before ScrcpyDeX started and must remain untouched.
                 await _resilience.ExecuteDirectAsync(
-                    $"{target}shell \"am broadcast -a com.sec.android.app.desktoplauncher.ACTION_STOP_DESKTOP_MODE ; am broadcast -a com.samsung.android.desktopmode.action.DESKTOP_MODE_UPDATE --ez enabled false ; pkill -f com.scrcpydex.server.Server\"",
+                    $"{target}shell \"pkill -f com.scrcpydex.server.Server\"",
                     TimeSpan.FromSeconds(2),
                     ct).ConfigureAwait(false);
             }

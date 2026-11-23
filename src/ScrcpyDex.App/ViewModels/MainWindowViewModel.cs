@@ -200,11 +200,16 @@ namespace ScrcpyDex.App.ViewModels
             ? LocalizationManager.Instance.GetString("Ui_AutoDetectPath")
             : AdbPath;
 
+        public bool CanBrowseBinaryPaths => !OperatingSystem.IsWindows();
+        public bool CanLocateScrcpyBinary => CanBrowseBinaryPaths && !IsScrcpyDetected;
+        public bool CanLocateAdbBinary => CanBrowseBinaryPaths && !IsAdbDetected;
+
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(CanStart))]
         [NotifyPropertyChangedFor(nameof(IsCriticalErrorOverlayVisible))]
         [NotifyPropertyChangedFor(nameof(CriticalErrorTitle))]
         [NotifyPropertyChangedFor(nameof(CriticalErrorDescription))]
+        [NotifyPropertyChangedFor(nameof(CanLocateScrcpyBinary))]
         [NotifyCanExecuteChangedFor(nameof(StartSessionCommand))]
         private bool _isScrcpyDetected = true;
 
@@ -213,6 +218,7 @@ namespace ScrcpyDex.App.ViewModels
         [NotifyPropertyChangedFor(nameof(IsCriticalErrorOverlayVisible))]
         [NotifyPropertyChangedFor(nameof(CriticalErrorTitle))]
         [NotifyPropertyChangedFor(nameof(CriticalErrorDescription))]
+        [NotifyPropertyChangedFor(nameof(CanLocateAdbBinary))]
         [NotifyCanExecuteChangedFor(nameof(StartSessionCommand))]
         private bool _isAdbDetected = true;
 
@@ -605,11 +611,15 @@ namespace ScrcpyDex.App.ViewModels
             {
                 if (!IsScrcpyDetected)
                 {
-                    return LocalizationManager.Instance.GetString("Error_ScrcpyNotFoundDesc");
+                    return OperatingSystem.IsWindows()
+                        ? "The portable scrcpy distribution is missing. Place the complete scrcpy folder next to ScrcpyDex.App.exe."
+                        : LocalizationManager.Instance.GetString("Error_ScrcpyNotFoundDesc");
                 }
                 if (!IsAdbDetected)
                 {
-                    return LocalizationManager.Instance.GetString("Error_AdbNotFoundDesc");
+                    return OperatingSystem.IsWindows()
+                        ? "The portable adb.exe is missing from the scrcpy folder next to ScrcpyDex.App.exe."
+                        : LocalizationManager.Instance.GetString("Error_AdbNotFoundDesc");
                 }
                 if (HasDoctorErrors)
                 {
@@ -957,7 +967,7 @@ namespace ScrcpyDex.App.ViewModels
                 SetLanguageInternal(settings.Language);
             }
 
-            if (!string.IsNullOrWhiteSpace(settings.Paths.ScrcpyPath))
+            if (!OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(settings.Paths.ScrcpyPath))
             {
                 if (ScrcpyPathResolver.IsValidCustomScrcpyPath(settings.Paths.ScrcpyPath))
                 {
@@ -970,7 +980,7 @@ namespace ScrcpyDex.App.ViewModels
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(settings.Paths.AdbPath))
+            if (!OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(settings.Paths.AdbPath))
             {
                 if (ScrcpyPathResolver.IsValidCustomAdbPath(settings.Paths.AdbPath))
                 {
@@ -1030,8 +1040,8 @@ namespace ScrcpyDex.App.ViewModels
                 settings.Device.StayAwake = StayAwake;
                 settings.Device.TurnScreenOff = TurnScreenOff;
                 settings.Device.ExperimentalDex = ExperimentalDex;
-                settings.Paths.ScrcpyPath = ScrcpyPath;
-                settings.Paths.AdbPath = AdbPath;
+                settings.Paths.ScrcpyPath = OperatingSystem.IsWindows() ? null : ScrcpyPath;
+                settings.Paths.AdbPath = OperatingSystem.IsWindows() ? null : AdbPath;
 
                 await _configRepo.SaveAsync(settings).ConfigureAwait(false);
             }
@@ -1077,7 +1087,10 @@ namespace ScrcpyDex.App.ViewModels
                     {
                         SessionStatusText = StatusWarning;
                     }
-                    LogEntries.Push(new ProcessLogEntry(DateTime.Now, "Warning: scrcpy binary was not found. Please configure its location using the 'Scrcpy' button in the title bar.", ProcessLogLevel.Warning));
+                    string warning = OperatingSystem.IsWindows()
+                        ? "Warning: portable scrcpy binary was not found under the ScrcpyDeX application folder."
+                        : "Warning: scrcpy binary was not found. Please configure its location using the 'Scrcpy' button in the title bar.";
+                    LogEntries.Push(new ProcessLogEntry(DateTime.Now, warning, ProcessLogLevel.Warning));
                 }
                 else if (!adbFound)
                 {
