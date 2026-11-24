@@ -355,6 +355,71 @@
                                        TextTrimming="CharacterEllipsis" />
                         </StackPanel>
 
+                        <Border Grid.Row="1"
+                                Background="#16161C"
+                                BorderBrush="#2B2B33"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="12,10"
+                                Margin="0,10,0,0"
+                                VerticalAlignment="Bottom">
+                            <StackPanel Spacing="7">
+                                <Grid ColumnDefinitions="Auto, *">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding [DirectAdb_Title], Source={x:Static loc:LocalizationManager.Instance}}"
+                                               FontSize="9.5"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="0.7"
+                                               Foreground="#D0D0D7" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="ADB TCP/IP"
+                                               FontSize="9"
+                                               Foreground="#86868B"
+                                               HorizontalAlignment="Right" />
+                                </Grid>
+
+                                <Grid ColumnDefinitions="*, 8, 72, 8, Auto, 6, Auto">
+                                    <TextBox Grid.Column="0"
+                                             Text="{Binding DirectAdbHost, Mode=TwoWay}"
+                                             Watermark="{Binding [DirectAdb_HostPlaceholder], Source={x:Static loc:LocalizationManager.Instance}}"
+                                             FontSize="10.5"
+                                             Height="32" />
+                                    <TextBox Grid.Column="2"
+                                             Text="{Binding DirectAdbPort, Mode=TwoWay}"
+                                             Watermark="5555"
+                                             FontSize="10.5"
+                                             Height="32"
+                                             HorizontalContentAlignment="Center" />
+                                    <Button Grid.Column="4"
+                                            Classes="pill-button"
+                                            Command="{Binding ConnectDirectAdbCommand}"
+                                            IsEnabled="{Binding CanUseDirectAdbButtons}"
+                                            Height="32"
+                                            Padding="10,0">
+                                        <TextBlock Text="{Binding [DirectAdb_Connect], Source={x:Static loc:LocalizationManager.Instance}}"
+                                                   FontSize="9.5"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FF9A3D" />
+                                    </Button>
+                                    <Button Grid.Column="6"
+                                            Classes="pill-button"
+                                            Command="{Binding DisconnectDirectAdbCommand}"
+                                            IsEnabled="{Binding CanUseDirectAdbButtons}"
+                                            Height="32"
+                                            Padding="10,0">
+                                        <TextBlock Text="{Binding [DirectAdb_Disconnect], Source={x:Static loc:LocalizationManager.Instance}}"
+                                                   FontSize="9.5"
+                                                   Foreground="#D0D0D7" />
+                                    </Button>
+                                </Grid>
+
+                                <TextBlock Text="{Binding DirectAdbStatusText}"
+                                           FontSize="9"
+                                           Foreground="#86868B"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Action Row: [START / STOP | SCAN] -->
                         <Grid Grid.Row="2"
                               ColumnDefinitions="*, 10, 108"

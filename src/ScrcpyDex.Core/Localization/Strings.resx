@@ -1030,4 +1030,34 @@ sudo apt install va-driver-all i965-va-driver intel-media-va-driver vainfo mesa-
   <data name="Status_InvalidAdbExecutable" xml:space="preserve">
     <value>Invalid executable selected for adb. Please choose a valid Android Debug Bridge binary.</value>
   </data>
+  <data name="DirectAdb_Title" xml:space="preserve">
+    <value>DIRECT ADB CONNECTION</value>
+  </data>
+  <data name="DirectAdb_HostPlaceholder" xml:space="preserve">
+    <value>Phone IP address</value>
+  </data>
+  <data name="DirectAdb_Connect" xml:space="preserve">
+    <value>CONNECT</value>
+  </data>
+  <data name="DirectAdb_Disconnect" xml:space="preserve">
+    <value>DISCONNECT</value>
+  </data>
+  <data name="DirectAdb_Idle" xml:space="preserve">
+    <value>Enter the phone IP address. Port 5555 is used by default.</value>
+  </data>
+  <data name="DirectAdb_InvalidPort" xml:space="preserve">
+    <value>Enter a TCP port between 1 and 65535.</value>
+  </data>
+  <data name="DirectAdb_InvalidAddress" xml:space="preserve">
+    <value>Enter a valid phone IP address and TCP port.</value>
+  </data>
+  <data name="DirectAdb_Connecting" xml:space="preserve">
+    <value>Connecting to {0}:{1}...</value>
+  </data>
+  <data name="DirectAdb_Disconnected" xml:space="preserve">
+    <value>Disconnected {0}.</value>
+  </data>
+  <data name="DirectAdb_DisconnectFailed" xml:space="preserve">
+    <value>Could not disconnect {0}.</value>
+  </data>
 </root>

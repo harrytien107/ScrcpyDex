@@ -8,7 +8,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "2.1.0",
+    [string]$Version = "2.1.2",
     [string]$Configuration = "Release",
     [string]$OutputDir = "",
     [string]$ScrcpySourceDir = ""
@@ -64,8 +64,11 @@ $ScrcpySourceDir = (Resolve-Path $ScrcpySourceDir).Path
 Write-Host "scrcpy:       $ScrcpySourceDir"
 Write-Host ""
 
-$stageDir = Join-Path $OutputDir (".scrcpydex-win-stage-" + [System.Guid]::NewGuid().ToString("N"))
+$buildId = [System.Guid]::NewGuid().ToString("N")
+$stageDir = Join-Path $OutputDir (".scrcpydex-win-stage-" + $buildId)
+$artifactsDir = Join-Path $OutputDir (".scrcpydex-dotnet-artifacts-" + $buildId)
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
 
 try {
     $appProject = Join-Path $repoRoot "src\ScrcpyDex.App\ScrcpyDex.App.csproj"
@@ -80,9 +83,11 @@ try {
         -c $Configuration `
         -r win-x64 `
         --self-contained true `
+        --artifacts-path $artifactsDir `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -p:EnableCompressionInSingleFile=true `
+        -p:RestoreIgnoreFailedSources=true `
         -p:Version=$Version `
         -p:AssemblyVersion="${Version}.0" `
         -p:FileVersion="${Version}.0" `
@@ -201,5 +206,8 @@ try {
 finally {
     if (Test-Path $stageDir) {
         Remove-Item -Path $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $artifactsDir) {
+        Remove-Item -Path $artifactsDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

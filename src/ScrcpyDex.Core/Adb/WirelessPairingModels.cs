@@ -45,6 +45,25 @@ namespace ScrcpyDex.Core.Adb
         string Message,
         bool IsTls = false);
 
+    public enum DirectAdbConnectionStatus
+    {
+        Connected = 0,
+        AlreadyConnected = 1,
+        InvalidAddress = 2,
+        Unauthorized = 3,
+        Offline = 4,
+        ConnectionRefused = 5,
+        TimedOut = 6,
+        Failed = 7
+    }
+
+    public sealed record DirectAdbConnectionResult(
+        bool Succeeded,
+        string? TargetSerial,
+        DirectAdbConnectionStatus Status,
+        string Message,
+        bool IsTls = false);
+
     public sealed class WirelessPairingStateChangedEventArgs : EventArgs
     {
         public WirelessPairingState State { get; }

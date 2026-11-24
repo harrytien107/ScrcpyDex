@@ -144,12 +144,13 @@ namespace ScrcpyDex.Services
                 if (connectEndpoint != null)
                 {
                     string targetSerial = $"{connectEndpoint.IpAddress}:{connectEndpoint.Port}";
-                    bool connected = await _adbService.ConnectWirelessDeviceAsync(
+                    var directResult = await _adbService.ConnectDirectTcpIpAsync(
                         connectEndpoint.IpAddress,
                         connectEndpoint.Port,
-                        linkedCts.Token).ConfigureAwait(false);
+                        isTlsEndpoint: true,
+                        ct: linkedCts.Token).ConfigureAwait(false);
 
-                    if (connected)
+                    if (directResult.Succeeded)
                     {
                         RaiseState(WirelessPairingState.Paired, targetSerial, $"Connected wirelessly to {targetSerial}.");
                         return new WirelessTransitionResult(true, targetSerial, connectEndpoint.IpAddress, connectEndpoint.Port, "Connected wirelessly.", IsTls: true);

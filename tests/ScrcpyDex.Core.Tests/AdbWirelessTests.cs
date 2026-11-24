@@ -18,6 +18,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ScrcpyDex.Core.Adb;
+using ScrcpyDex.Core.Configuration;
 using ScrcpyDex.Models;
 using ScrcpyDex.Services;
 using Xunit;
@@ -112,6 +113,36 @@ namespace ScrcpyDex.Core.Tests
             Assert.Equal(expected, AdbService.IsAdbConnectSuccess(output));
         }
 
+        [Theory]
+        [InlineData("", 5555)]
+        [InlineData("not-an-ip", 5555)]
+        [InlineData("192.0.2.10", 0)]
+        [InlineData("192.0.2.10", 65536)]
+        public async Task ConnectDirectTcpIpAsync_InvalidEndpoint_ReturnsValidationErrorWithoutExecutingAdb(string host, int port)
+        {
+            var service = new AdbService();
+
+            DirectAdbConnectionResult result = await service.ConnectDirectTcpIpAsync(host, port);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(DirectAdbConnectionStatus.InvalidAddress, result.Status);
+        }
+
+        [Fact]
+        public void DirectAdbSettings_DefaultToPort5555AndPreserveCustomPort()
+        {
+            var settings = new ScrcpyDeXSettings();
+
+            Assert.Equal(string.Empty, settings.Device.AdbHost);
+            Assert.Equal(5555, settings.Device.AdbPort);
+
+            settings.Device.AdbHost = "192.0.2.10";
+            settings.Device.AdbPort = 43210;
+
+            Assert.Equal("192.0.2.10", settings.Device.AdbHost);
+            Assert.Equal(43210, settings.Device.AdbPort);
+        }
+
         [Fact]
         public void MdnsPacketParser_BuildAndParseSrvWithARecord_ReturnsEndpoint()
         {
@@ -194,6 +225,7 @@ namespace ScrcpyDex.Core.Tests
         [InlineData("R5CW123456", "R5CW123456", false)]
         [InlineData("adb-R5CW123456-xYz123._adb-tls-connect._tcp", "R5CW123456", true)]
         [InlineData("192.0.2.10:5555", "", false)]
+        [InlineData("192.0.2.10:43210", "", false)]
         public void DeviceInfo_ExtractsHardwareSerialAndTlsStatus(string serial, string expectedHw, bool expectedTls)
         {
             var dev = new DeviceInfo { Serial = serial };
@@ -223,6 +255,7 @@ namespace ScrcpyDex.Core.Tests
             Assert.Equal("192.0.2.99:37777", result.TargetSerial);
             Assert.Equal(("192.0.2.99", 41111, session.Password), fakeAdb.PairedCall);
             Assert.Equal(("192.0.2.99", 37777), fakeAdb.ConnectedCall);
+            Assert.True(fakeAdb.LastConnectWasTls);
             Assert.Contains(WirelessPairingState.WaitingForScan, observedStates);
             Assert.Contains(WirelessPairingState.Pairing, observedStates);
             Assert.Contains(WirelessPairingState.Connecting, observedStates);
@@ -301,6 +334,7 @@ namespace ScrcpyDex.Core.Tests
             public IReadOnlyList<MdnsAdbServiceEndpoint> MdnsEndpoints { get; set; } = Array.Empty<MdnsAdbServiceEndpoint>();
             public (string Host, int Port, string Code)? PairedCall { get; private set; }
             public (string Host, int Port)? ConnectedCall { get; private set; }
+            public bool LastConnectWasTls { get; private set; }
 
             public void ConfigurePaths(string? customAdbPath = null, string? scrcpyPath = null) { }
             public Task<DeviceInfo> DetectDeviceAsync(CancellationToken ct = default) => Task.FromResult(new DeviceInfo());
@@ -332,6 +366,18 @@ namespace ScrcpyDex.Core.Tests
             {
                 ConnectedCall = (host, port);
                 return Task.FromResult(true);
+            }
+            public Task<DirectAdbConnectionResult> ConnectDirectTcpIpAsync(string host, int port, bool isTlsEndpoint = false, CancellationToken ct = default)
+            {
+                ConnectedCall = (host, port);
+                LastConnectWasTls = isTlsEndpoint;
+                string target = $"{host}:{port}";
+                return Task.FromResult(new DirectAdbConnectionResult(
+                    true,
+                    target,
+                    DirectAdbConnectionStatus.Connected,
+                    $"Connected to {target}.",
+                    isTlsEndpoint));
             }
             public Task<bool> DisconnectWirelessDeviceAsync(string targetSerial, CancellationToken ct = default) => Task.FromResult(true);
             public Task<IReadOnlyList<MdnsAdbServiceEndpoint>> GetMdnsServicesAsync(CancellationToken ct = default) =>

@@ -294,6 +294,8 @@ namespace ScrcpyDex.Core.Configuration
         private bool _stayAwake = false;
         private bool _autoConnect = false;
         private bool _experimentalDex = false;
+        private string _adbHost = string.Empty;
+        private int _adbPort = 5555;
 
         [JsonPropertyName("turnScreenOff")]
         public bool TurnScreenOff { get => _turnScreenOff; set => SetProperty(ref _turnScreenOff, value); }
@@ -306,6 +308,12 @@ namespace ScrcpyDex.Core.Configuration
 
         [JsonPropertyName("experimentalDex")]
         public bool ExperimentalDex { get => _experimentalDex; set => SetProperty(ref _experimentalDex, value); }
+
+        [JsonPropertyName("adbHost")]
+        public string AdbHost { get => _adbHost; set => SetProperty(ref _adbHost, value ?? string.Empty); }
+
+        [JsonPropertyName("adbPort")]
+        public int AdbPort { get => _adbPort; set => SetProperty(ref _adbPort, value is >= 1 and <= 65535 ? value : 5555); }
     }
 
     public sealed class PathsSection : ObservableObject

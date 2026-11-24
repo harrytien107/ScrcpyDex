@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.2",
   "language": "en",
   "display": {
     "resolution": "1920x1080 (FHD)",
@@ -25,7 +25,9 @@
     "turnScreenOff": false,
     "stayAwake": false,
     "autoConnect": false,
-    "experimentalDex": false
+    "experimentalDex": false,
+    "adbHost": "",
+    "adbPort": 5555
   },
   "ui": {
     "theme": "dark",

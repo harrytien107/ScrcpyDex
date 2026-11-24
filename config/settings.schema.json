@@ -81,6 +81,18 @@
         "turnScreenOff": { "type": "boolean" },
         "stayAwake": { "type": "boolean" },
         "autoConnect": { "type": "boolean" },
+        "adbHost": {
+          "type": "string",
+          "default": "",
+          "description": "Last phone IP address used for direct ADB TCP/IP connection"
+        },
+        "adbPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5555,
+          "description": "Last TCP port used for direct ADB connection"
+        },
         "experimentalDex": {
           "type": "boolean",
           "default": false,

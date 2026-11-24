@@ -53,6 +53,7 @@ namespace ScrcpyDex.Services
         Task<WirelessTransitionResult> SwitchToTcpIpAsync(string usbSerial, int port = 5555, CancellationToken ct = default);
         Task<bool> PairWirelessDeviceAsync(string host, int port, string pairingCode, CancellationToken ct = default);
         Task<bool> ConnectWirelessDeviceAsync(string host, int port, CancellationToken ct = default);
+        Task<DirectAdbConnectionResult> ConnectDirectTcpIpAsync(string host, int port, bool isTlsEndpoint = false, CancellationToken ct = default);
         Task<bool> DisconnectWirelessDeviceAsync(string targetSerial, CancellationToken ct = default);
         Task<IReadOnlyList<MdnsAdbServiceEndpoint>> GetMdnsServicesAsync(CancellationToken ct = default);
         void ResetResilienceState();
@@ -1176,23 +1177,106 @@ namespace ScrcpyDex.Services
 
         public async Task<bool> ConnectWirelessDeviceAsync(string host, int port, CancellationToken ct = default)
         {
-            if (string.IsNullOrWhiteSpace(host) || port is < 1 or > 65535)
+            var result = await ConnectDirectTcpIpAsync(host, port, false, ct).ConfigureAwait(false);
+            return result.Succeeded;
+        }
+
+        public async Task<DirectAdbConnectionResult> ConnectDirectTcpIpAsync(
+            string host,
+            int port,
+            bool isTlsEndpoint = false,
+            CancellationToken ct = default)
+        {
+            if (!TryBuildAdbTcpIpTarget(host, port, out string targetSerial))
             {
-                return false;
+                return new DirectAdbConnectionResult(
+                    false,
+                    null,
+                    DirectAdbConnectionStatus.InvalidAddress,
+                    "Enter a valid phone IP address and TCP port.");
             }
 
             var result = await _resilience.ExecuteDirectAsync(
-                $"connect {host.Trim()}:{port}",
+                $"connect {targetSerial}",
                 TimeSpan.FromSeconds(6),
                 ct).ConfigureAwait(false);
 
-            string combined = $"{result.Output}\n{result.Error}";
-            bool ok = result.Succeeded && IsAdbConnectSuccess(combined);
-            if (ok && port != 5555)
+            string combined = $"{result.Output}\n{result.Error}".Trim();
+            string normalized = combined.ToLowerInvariant();
+
+            if (normalized.Contains("connection refused", StringComparison.Ordinal) ||
+                normalized.Contains("actively refused", StringComparison.Ordinal) ||
+                normalized.Contains("cannot connect to", StringComparison.Ordinal) && normalized.Contains("refused", StringComparison.Ordinal))
             {
-                _knownTlsEndpoints[$"{host.Trim()}:{port}"] = 1;
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.ConnectionRefused,
+                    $"Connection refused by {targetSerial}. Make sure ADB TCP/IP is enabled on the phone.");
             }
-            return ok;
+
+            if (normalized.Contains("timed out", StringComparison.Ordinal) ||
+                normalized.Contains("timeout", StringComparison.Ordinal) ||
+                normalized.Contains("10060", StringComparison.Ordinal))
+            {
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.TimedOut,
+                    $"Timed out connecting to {targetSerial}.");
+            }
+
+            bool alreadyConnected = normalized.Contains("already connected to", StringComparison.Ordinal);
+            bool connected = result.Succeeded && IsAdbConnectSuccess(combined);
+            if (!connected)
+            {
+                string message = string.IsNullOrWhiteSpace(combined)
+                    ? $"Failed to connect to {targetSerial}."
+                    : combined;
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.Failed,
+                    message);
+            }
+
+            if (isTlsEndpoint)
+            {
+                _knownTlsEndpoints[targetSerial] = 1;
+            }
+
+            var devices = await GetConnectedDevicesAsync(ct).ConfigureAwait(false);
+            var device = devices.FirstOrDefault(d =>
+                string.Equals(d.Serial, targetSerial, StringComparison.OrdinalIgnoreCase));
+
+            if (device != null && device.State.Equals("unauthorized", StringComparison.OrdinalIgnoreCase))
+            {
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.Unauthorized,
+                    $"{targetSerial} is unauthorized. Accept the ADB authorization prompt on the phone.",
+                    isTlsEndpoint);
+            }
+
+            if (device != null && device.State.Equals("offline", StringComparison.OrdinalIgnoreCase))
+            {
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.Offline,
+                    $"{targetSerial} is offline. Re-enable ADB or reconnect the phone.",
+                    isTlsEndpoint);
+            }
+
+            return new DirectAdbConnectionResult(
+                true,
+                targetSerial,
+                alreadyConnected ? DirectAdbConnectionStatus.AlreadyConnected : DirectAdbConnectionStatus.Connected,
+                alreadyConnected
+                    ? $"Already connected to {targetSerial}."
+                    : $"Connected to {targetSerial}.",
+                isTlsEndpoint);
         }
 
         public async Task<bool> DisconnectWirelessDeviceAsync(string targetSerial, CancellationToken ct = default)
@@ -1208,6 +1292,32 @@ namespace ScrcpyDex.Services
                 ct).ConfigureAwait(false);
 
             return result.Succeeded;
+        }
+
+        private static bool TryBuildAdbTcpIpTarget(string host, int port, out string targetSerial)
+        {
+            targetSerial = string.Empty;
+            if (string.IsNullOrWhiteSpace(host) || port is < 1 or > 65535)
+            {
+                return false;
+            }
+
+            string trimmedHost = host.Trim();
+            if (trimmedHost.Length >= 2 && trimmedHost[0] == '[' && trimmedHost[^1] == ']')
+            {
+                trimmedHost = trimmedHost[1..^1];
+            }
+
+            if (!IPAddress.TryParse(trimmedHost, out IPAddress? ipAddress))
+            {
+                return false;
+            }
+
+            string normalizedHost = ipAddress.AddressFamily == AddressFamily.InterNetworkV6
+                ? $"[{ipAddress}]"
+                : ipAddress.ToString();
+            targetSerial = $"{normalizedHost}:{port}";
+            return true;
         }
 
         public async Task<IReadOnlyList<MdnsAdbServiceEndpoint>> GetMdnsServicesAsync(CancellationToken ct = default)

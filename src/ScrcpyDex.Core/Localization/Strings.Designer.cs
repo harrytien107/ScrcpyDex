@@ -410,5 +410,15 @@ namespace ScrcpyDex.Core.Localization
         public static string Doctor_SummaryErrors => LocalizationManager.Instance.GetString(nameof(Doctor_SummaryErrors));
         public static string Doctor_SummaryWarnings => LocalizationManager.Instance.GetString(nameof(Doctor_SummaryWarnings));
         public static string Doctor_SummaryPassed => LocalizationManager.Instance.GetString(nameof(Doctor_SummaryPassed));
+        public static string DirectAdb_Title => LocalizationManager.Instance.GetString(nameof(DirectAdb_Title));
+        public static string DirectAdb_HostPlaceholder => LocalizationManager.Instance.GetString(nameof(DirectAdb_HostPlaceholder));
+        public static string DirectAdb_Connect => LocalizationManager.Instance.GetString(nameof(DirectAdb_Connect));
+        public static string DirectAdb_Disconnect => LocalizationManager.Instance.GetString(nameof(DirectAdb_Disconnect));
+        public static string DirectAdb_Idle => LocalizationManager.Instance.GetString(nameof(DirectAdb_Idle));
+        public static string DirectAdb_InvalidPort => LocalizationManager.Instance.GetString(nameof(DirectAdb_InvalidPort));
+        public static string DirectAdb_InvalidAddress => LocalizationManager.Instance.GetString(nameof(DirectAdb_InvalidAddress));
+        public static string DirectAdb_Connecting => LocalizationManager.Instance.GetString(nameof(DirectAdb_Connecting));
+        public static string DirectAdb_Disconnected => LocalizationManager.Instance.GetString(nameof(DirectAdb_Disconnected));
+        public static string DirectAdb_DisconnectFailed => LocalizationManager.Instance.GetString(nameof(DirectAdb_DisconnectFailed));
     }
 }
