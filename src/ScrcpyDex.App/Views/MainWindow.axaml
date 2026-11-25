@@ -6,12 +6,12 @@
         xmlns:loc="using:ScrcpyDex.Core.Localization"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="680" d:DesignHeight="390"
+        mc:Ignorable="d" d:DesignWidth="760" d:DesignHeight="490"
         x:Class="ScrcpyDex.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding [MainWindow_Title], Source={x:Static loc:LocalizationManager.Instance}}"
         Icon="avares://ScrcpyDex.App/Assets/app_icon.ico"
-        Width="680" Height="390" MinWidth="680" MaxWidth="680" MinHeight="390" MaxHeight="390"
+        Width="760" Height="490" MinWidth="760" MaxWidth="760" MinHeight="490" MaxHeight="490"
         CanResize="False"
         SystemDecorations="None"
         ShowInTaskbar="True"
@@ -418,17 +418,26 @@
                                 <TextBlock Text="{Binding DirectAdbStatusText}"
                                            FontSize="9"
                                            Foreground="{Binding DirectAdbStatusBrush}"
-                                           TextWrapping="Wrap" />
-                                <ComboBox ItemsSource="{Binding DirectAdbEndpoints}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip.Tip="{Binding DirectAdbStatusText}" />
+                                <ComboBox Classes="dex-combobox"
+                                          ItemsSource="{Binding DirectAdbEndpoints}"
                                           SelectedItem="{Binding SelectedDirectAdbEndpoint, Mode=TwoWay}"
                                           IsEnabled="{Binding CanUseDirectAdbButtons}"
-                                          PlaceholderText="Wireless ADB endpoints"
+                                          PlaceholderText="{Binding DirectAdbEndpointPlaceholder}"
                                           HorizontalAlignment="Stretch"
-                                          FontSize="10" />
+                                          FontSize="10">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:MainWindowViewModel+DirectAdbEndpointItem">
+                                            <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Label}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
                                 <TextBlock Text="{Binding DirectAdbDeviceText}"
                                            FontSize="9"
                                            Foreground="#D0D0D7"
-                                           TextWrapping="Wrap" />
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip.Tip="{Binding DirectAdbDeviceText}" />
                             </StackPanel>
                         </Border>
 

@@ -14,6 +14,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -118,6 +119,45 @@ namespace ScrcpyDex.Core.Tests
 
             Assert.Equal("_adb-tls-connect._tcp", endpoints[1].ServiceType);
             Assert.Equal(37891, endpoints[1].Port);
+        }
+
+        [Fact]
+        public void ParseMdnsServicesOutput_AcceptsLegacyAndIpv6ConnectServices()
+        {
+            var endpoints = AdbService.ParseMdnsServicesOutput(
+                "legacy\t_adb._tcp.\t192.0.2.10:5555\n" +
+                "native\t_ADB-TLS-CONNECT._TCP\t[2001:db8::1]:43210\n" +
+                "invalid\t_adb._tcp\t192.0.2.10:0\n");
+            Assert.Equal(2, endpoints.Count);
+            Assert.All(endpoints, e => Assert.True(AdbService.IsConnectService(e)));
+            Assert.Equal("_adb._tcp", endpoints[0].ServiceType);
+            Assert.Equal("2001:db8::1", endpoints[1].IpAddress);
+        }
+
+        [Fact]
+        public void FindDirectAdbDevice_MatchesExactTlsServiceAndPortWithUsbPresent()
+        {
+            var services = new[]
+            {
+                new MdnsAdbServiceEndpoint("adb-test-abc", "_adb-tls-connect._tcp", "192.0.2.10", 43210),
+                new MdnsAdbServiceEndpoint("adb-test-abc", "_adb-tls-pairing._tcp", "192.0.2.10", 43211)
+            };
+            var tls = new DeviceInfo { Serial = "adb-test-abc._adb-tls-connect._tcp", State = "device" };
+            var devices = new[]
+            {
+                new DeviceInfo { Serial = "test", State = "device" },
+                new DeviceInfo { Serial = "adb-test-abc-extra._adb-tls-connect._tcp", State = "device" },
+                new DeviceInfo { Serial = "192.0.2.10:43210", State = "offline" },
+                tls
+            };
+            Assert.Same(tls, AdbService.FindDirectAdbDevice("192.0.2.10:43210", devices, services));
+            Assert.Null(AdbService.FindDirectAdbDevice("192.0.2.10:43211", devices, services));
+            Assert.Null(AdbService.FindDirectAdbDevice("192.0.2.10:43210", devices.Take(2), services));
+            var result = AdbService.EvaluateDirectAdbConnection("192.0.2.10:43210", tls, true, true);
+            Assert.True(result.Succeeded);
+            Assert.Equal(tls.Serial, result.TargetSerial);
+            tls.State = "unauthorized";
+            Assert.False(AdbService.EvaluateDirectAdbConnection("192.0.2.10:43210", tls, false, true).Succeeded);
         }
 
         [Theory]

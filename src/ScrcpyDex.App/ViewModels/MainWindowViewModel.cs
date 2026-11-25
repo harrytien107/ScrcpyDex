@@ -143,10 +143,22 @@ namespace ScrcpyDex.App.ViewModels
         private string _directAdbDeviceText = string.Empty;
 
         [ObservableProperty]
-        private IReadOnlyList<string> _directAdbEndpoints = Array.Empty<string>();
+        [NotifyPropertyChangedFor(nameof(DirectAdbEndpointPlaceholder))]
+        private IReadOnlyList<DirectAdbEndpointItem> _directAdbEndpoints = Array.Empty<DirectAdbEndpointItem>();
 
         [ObservableProperty]
-        private string? _selectedDirectAdbEndpoint;
+        private DirectAdbEndpointItem? _selectedDirectAdbEndpoint;
+
+        public sealed record DirectAdbEndpointItem(string Target, string Label)
+        {
+            public override string ToString() => Label;
+        }
+
+        public string DirectAdbEndpointPlaceholder => DirectAdbEndpoints.Count == 0
+            ? "No wireless endpoints discovered" : "Select a wireless ADB endpoint";
+
+        private bool _updatingDirectAdbSelection;
+        private bool _directAdbAddressEntered;
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(CanUseDirectAdbButtons))]
@@ -1646,35 +1658,38 @@ namespace ScrcpyDex.App.ViewModels
             host.Contains(':') && !host.StartsWith("[", StringComparison.Ordinal)
                 ? $"[{host}]:{port}" : $"{host}:{port}";
 
-        private static bool IsConnectService(MdnsAdbServiceEndpoint endpoint) =>
-            endpoint.ServiceType.TrimEnd('.') is "_adb-tls-connect._tcp" or "_adb._tcp";
-
-        private string GetWirelessEndpoint(DeviceInfo device)
-        {
-            var service = _directAdbMdns.FirstOrDefault(e =>
-                device.Serial.Equals(e.InstanceName, StringComparison.OrdinalIgnoreCase) ||
-                device.Serial.StartsWith(e.InstanceName + ".", StringComparison.OrdinalIgnoreCase));
-            return service == null ? device.Serial : FormatAdbEndpoint(service.IpAddress, service.Port);
-        }
+        private string GetWirelessEndpoint(DeviceInfo device) => AdbService.GetDirectAdbEndpoint(device, _directAdbMdns);
 
         partial void OnDirectAdbHostChanged(string value)
         {
+            if (_updatingDirectAdbSelection) return;
+            _directAdbAddressEntered = true;
             _directAdbLastResult = null;
             UpdateDirectAdbStatus();
         }
 
         partial void OnDirectAdbPortChanged(string value)
         {
+            if (_updatingDirectAdbSelection) return;
+            _directAdbAddressEntered = true;
             _directAdbLastResult = null;
             UpdateDirectAdbStatus();
         }
 
-        partial void OnSelectedDirectAdbEndpointChanged(string? value)
+        partial void OnSelectedDirectAdbEndpointChanged(DirectAdbEndpointItem? value)
         {
-            if (value == null || !System.Net.IPEndPoint.TryParse(value, out var endpoint))
+            if (_updatingDirectAdbSelection || value == null || !System.Net.IPEndPoint.TryParse(value.Target, out var endpoint))
                 return;
-            DirectAdbHost = endpoint.Address.ToString();
-            DirectAdbPort = endpoint.Port.ToString(CultureInfo.InvariantCulture);
+            _directAdbAddressEntered = true;
+            _updatingDirectAdbSelection = true;
+            try
+            {
+                DirectAdbHost = endpoint.Address.ToString();
+                DirectAdbPort = endpoint.Port.ToString(CultureInfo.InvariantCulture);
+                _directAdbLastResult = null;
+            }
+            finally { _updatingDirectAdbSelection = false; }
+            UpdateDirectAdbStatus();
         }
 
         private async Task RefreshDirectAdbMdnsAsync()
@@ -1687,7 +1702,7 @@ namespace ScrcpyDex.App.ViewModels
                 var services = await _adbService.GetMdnsServicesAsync();
                 if (_isDisposed)
                     return;
-                _directAdbMdns = services.Where(IsConnectService).ToList();
+                _directAdbMdns = services.Where(AdbService.IsConnectService).ToList();
                 UpdateDirectAdbStatus();
             }
             catch (Exception ex)
@@ -1712,20 +1727,33 @@ namespace ScrcpyDex.App.ViewModels
             var endpoints = _directAdbDevices.Select(GetWirelessEndpoint)
                 .Concat(_directAdbMdns.Select(e => FormatAdbEndpoint(e.IpAddress, e.Port)))
                 .Where(e => System.Net.IPEndPoint.TryParse(e, out _))
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (!DirectAdbEndpoints.SequenceEqual(endpoints))
-                DirectAdbEndpoints = endpoints;
-            DirectAdbDeviceText = string.Join("\n", _directAdbDevices.Select(d =>
-                $"{d.MarketingName} | {d.ModelCode} | {GetWirelessEndpoint(d)} | {(d.IsTlsWireless ? "Wireless TLS" : "Wireless TCP/IP")} | {(d.IsConnected ? "Connected" : d.State)}"));
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(e => e, StringComparer.OrdinalIgnoreCase).ToArray();
+            var target = TryGetDirectAdbTargetSerial(out var serial) ? serial : null;
+            var items = endpoints.Select(e =>
+            {
+                var match = AdbService.FindDirectAdbDevice(e, _directAdbDevices, _directAdbMdns);
+                string state = match == null ? "Discovered" : match.IsConnected ? "Connected" : match.State;
+                string name = match == null ? string.Empty : $" | {match.MarketingName}";
+                return new DirectAdbEndpointItem(e, $"{e}{name} | {state}");
+            }).ToArray();
+            _updatingDirectAdbSelection = true;
+            try
+            {
+                if (!DirectAdbEndpoints.SequenceEqual(items))
+                    DirectAdbEndpoints = items;
+                SelectedDirectAdbEndpoint = DirectAdbEndpoints.FirstOrDefault(e =>
+                    string.Equals(e.Target, target, StringComparison.OrdinalIgnoreCase));
+            }
+            finally { _updatingDirectAdbSelection = false; }
             if (IsDirectAdbBusy)
                 return;
 
-            var target = TryGetDirectAdbTargetSerial(out var serial) ? serial : null;
-            var device = _directAdbDevices.FirstOrDefault(d =>
-                string.Equals(GetWirelessEndpoint(d), target, StringComparison.OrdinalIgnoreCase));
-            if (target == null && endpoints.Length > 0 && string.IsNullOrWhiteSpace(DirectAdbHost))
+            var device = target == null ? null : AdbService.FindDirectAdbDevice(target, _directAdbDevices, _directAdbMdns);
+            DirectAdbDeviceText = device == null ? string.Empty :
+                $"{device.MarketingName} | {device.ModelCode} | {(device.IsTlsWireless ? "Wireless TLS" : "Wireless TCP/IP")}";
+            if (!_directAdbAddressEntered && target == null && endpoints.Length > 0 && string.IsNullOrWhiteSpace(DirectAdbHost))
             {
-                SelectedDirectAdbEndpoint = endpoints[0];
+                SelectedDirectAdbEndpoint = DirectAdbEndpoints[0];
                 return;
             }
             if (device != null)
@@ -1849,7 +1877,7 @@ namespace ScrcpyDex.App.ViewModels
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     UpdateDevicesList(devices);
-                    if (!string.IsNullOrWhiteSpace(result.TargetSerial))
+                    if (result.Succeeded && !string.IsNullOrWhiteSpace(result.TargetSerial))
                     {
                         var directTarget = DeviceList.FirstOrDefault(d =>
                             string.Equals(d.Serial, result.TargetSerial, StringComparison.OrdinalIgnoreCase));
@@ -1902,8 +1930,7 @@ namespace ScrcpyDex.App.ViewModels
 
             IsDirectAdbBusy = true;
             SetDirectAdbStatus("Disconnecting", "#FF9A3D", targetSerial);
-            var device = _directAdbDevices.FirstOrDefault(d =>
-                string.Equals(GetWirelessEndpoint(d), targetSerial, StringComparison.OrdinalIgnoreCase));
+            var device = AdbService.FindDirectAdbDevice(targetSerial, _directAdbDevices, _directAdbMdns);
             try
             {
                 bool disconnected = await _adbService.DisconnectWirelessDeviceAsync(device?.Serial ?? targetSerial).ConfigureAwait(false);
@@ -1951,19 +1978,8 @@ namespace ScrcpyDex.App.ViewModels
         private bool TryGetDirectAdbTargetSerial(out string targetSerial)
         {
             targetSerial = string.Empty;
-            if (TryParseDirectAdbPort(out int port) && !string.IsNullOrWhiteSpace(DirectAdbHost))
-            {
-                string host = DirectAdbHost.Trim();
-                if (host.Contains(':') && !host.StartsWith("[", StringComparison.Ordinal))
-                {
-                    host = $"[{host}]";
-                }
-
-                targetSerial = $"{host}:{port}";
-                return true;
-            }
-
-            return false;
+            return TryParseDirectAdbPort(out int port) &&
+                AdbService.TryBuildAdbTcpIpTarget(DirectAdbHost, port, out targetSerial);
         }
 
         [RelayCommand]

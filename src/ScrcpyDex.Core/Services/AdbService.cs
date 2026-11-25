@@ -1196,6 +1196,16 @@ namespace ScrcpyDex.Services
                     "Enter a valid phone IP address and TCP port.");
             }
 
+            var services = await GetMdnsServicesAsync(ct).ConfigureAwait(false);
+            isTlsEndpoint |= services.Any(e => e.ServiceType == "_adb-tls-connect._tcp" &&
+                TryBuildAdbTcpIpTarget(e.IpAddress, e.Port, out var endpoint) && endpoint == targetSerial);
+            if (isTlsEndpoint)
+            {
+                var existing = FindDirectAdbDevice(targetSerial, await GetConnectedDevicesAsync(ct).ConfigureAwait(false), services);
+                if (existing?.IsConnected == true)
+                    return EvaluateDirectAdbConnection(targetSerial, existing, true, true);
+            }
+
             var result = await _resilience.ExecuteDirectAsync(
                 $"connect {targetSerial}",
                 TimeSpan.FromSeconds(6),
@@ -1203,6 +1213,13 @@ namespace ScrcpyDex.Services
 
             string combined = $"{result.Output}\n{result.Error}".Trim();
             string normalized = combined.ToLowerInvariant();
+            if (isTlsEndpoint)
+                _knownTlsEndpoints[targetSerial] = 1;
+            var devices = await GetConnectedDevicesAsync(ct).ConfigureAwait(false);
+            var device = FindDirectAdbDevice(targetSerial, devices, services);
+            if (device != null)
+                return EvaluateDirectAdbConnection(targetSerial, device,
+                    normalized.Contains("already connected to", StringComparison.Ordinal), isTlsEndpoint || device.IsTlsWireless);
 
             if (normalized.Contains("connection refused", StringComparison.Ordinal) ||
                 normalized.Contains("actively refused", StringComparison.Ordinal) ||
@@ -1240,17 +1257,26 @@ namespace ScrcpyDex.Services
                     message);
             }
 
-            if (isTlsEndpoint)
-            {
-                _knownTlsEndpoints[targetSerial] = 1;
-            }
-
-            var devices = await GetConnectedDevicesAsync(ct).ConfigureAwait(false);
-            var device = devices.FirstOrDefault(d =>
-                string.Equals(d.Serial, targetSerial, StringComparison.OrdinalIgnoreCase));
-
             return EvaluateDirectAdbConnection(targetSerial, device, alreadyConnected, isTlsEndpoint);
         }
+
+        public static bool IsConnectService(MdnsAdbServiceEndpoint endpoint) =>
+            endpoint.ServiceType.TrimEnd('.').ToLowerInvariant() is "_adb-tls-connect._tcp" or "_adb._tcp";
+
+        public static string GetDirectAdbEndpoint(DeviceInfo device, IEnumerable<MdnsAdbServiceEndpoint> services)
+        {
+            if (IPEndPoint.TryParse(device.Serial, out var address))
+                return address.ToString();
+            var service = services.FirstOrDefault(e => IsConnectService(e) &&
+                (string.Equals(device.Serial.TrimEnd('.'), $"{e.InstanceName.TrimEnd('.')}.{e.ServiceType.TrimEnd('.')}", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(device.Serial.TrimEnd('.'), $"{e.InstanceName.TrimEnd('.')}.{e.ServiceType.TrimEnd('.')}.local", StringComparison.OrdinalIgnoreCase)));
+            return service != null && TryBuildAdbTcpIpTarget(service.IpAddress, service.Port, out var target)
+                ? target : device.Serial;
+        }
+
+        public static DeviceInfo? FindDirectAdbDevice(string target, IEnumerable<DeviceInfo> devices, IEnumerable<MdnsAdbServiceEndpoint> services) =>
+            devices.Where(d => d.IsWireless && string.Equals(GetDirectAdbEndpoint(d, services), target, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(d => d.IsConnected).FirstOrDefault();
 
         internal static DirectAdbConnectionResult EvaluateDirectAdbConnection(
             string targetSerial, DeviceInfo? device, bool alreadyConnected, bool isTlsEndpoint)
@@ -1287,7 +1313,7 @@ namespace ScrcpyDex.Services
 
             return new DirectAdbConnectionResult(
                 true,
-                targetSerial,
+                device.Serial,
                 alreadyConnected ? DirectAdbConnectionStatus.AlreadyConnected : DirectAdbConnectionStatus.Connected,
                 alreadyConnected
                     ? $"Already connected to {targetSerial}."
@@ -1310,7 +1336,7 @@ namespace ScrcpyDex.Services
             return result.Succeeded;
         }
 
-        private static bool TryBuildAdbTcpIpTarget(string host, int port, out string targetSerial)
+        public static bool TryBuildAdbTcpIpTarget(string host, int port, out string targetSerial)
         {
             targetSerial = string.Empty;
             if (string.IsNullOrWhiteSpace(host) || port is < 1 or > 65535)
@@ -1422,18 +1448,17 @@ namespace ScrcpyDex.Services
 
                 var match = Regex.Match(
                     trimmed,
-                    @"^(?<name>\S+)\s+(?<type>_(?:adb-tls-pairing|adb-tls-connect)\._tcp)\s+(?<ip>\d{1,3}(?:\.\d{1,3}){3}):(?<port>\d{1,5})$",
+                    @"^(?<name>\S+)\s+(?<type>_(?:adb|adb-tls-pairing|adb-tls-connect)\._tcp)\.?\s+(?<ip>\S+):(?<port>\d{1,5})$",
                     RegexOptions.IgnoreCase);
 
                 if (match.Success &&
-                    IPAddress.TryParse(match.Groups["ip"].Value, out var ip) &&
-                    ip.AddressFamily == AddressFamily.InterNetwork &&
+                    IPAddress.TryParse(match.Groups["ip"].Value.Trim('[', ']'), out var ip) &&
                     int.TryParse(match.Groups["port"].Value, out int port) &&
                     port is >= 1 and <= 65535)
                 {
                     endpoints.Add(new MdnsAdbServiceEndpoint(
                         match.Groups["name"].Value,
-                        match.Groups["type"].Value,
+                        match.Groups["type"].Value.ToLowerInvariant(),
                         ip.ToString(),
                         port));
                 }
