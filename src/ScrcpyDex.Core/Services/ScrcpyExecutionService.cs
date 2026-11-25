@@ -524,6 +524,10 @@ namespace ScrcpyDex.Services
             else if (mouseDriver == "sdk")
             {
                 args.Add("--keyboard=sdk");
+                if (IsMouseDrivenDexKeyboardCaptureSession(settings, displayId))
+                {
+                    args.Add("--raw-key-events");
+                }
             }
 
             // Left Alt must reach Android for DeX Alt+Tab. On a secondary SDK display,

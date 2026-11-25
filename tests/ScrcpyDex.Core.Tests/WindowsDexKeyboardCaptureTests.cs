@@ -57,6 +57,30 @@ namespace ScrcpyDex.Core.Tests
         }
 
         [Fact]
+        public void Ownership_HostRepeatInside_RemainsHostOwned()
+        {
+            var ownership = new KeyboardCaptureOwnership();
+            Assert.False(ownership.ShouldCapture(0x41, true, false, false));
+            Assert.False(ownership.ShouldCapture(0x41, true, false, true));
+            Assert.False(ownership.ShouldCapture(0x41, false, true, true));
+            Assert.True(ownership.ShouldCapture(0x41, true, false, true));
+        }
+
+        [Theory]
+        [InlineData(0xA0, 0x10)]
+        [InlineData(0xA1, 0x10)]
+        [InlineData(0xA2, 0x11)]
+        [InlineData(0xA3, 0x11)]
+        [InlineData(0xA4, 0x12)]
+        [InlineData(0xA5, 0x12)]
+        [InlineData(0x5B, 0x5B)]
+        [InlineData(0x41, 0x41)]
+        public void ModifierMessage_UsesWin32VirtualKey(uint original, uint expected)
+        {
+            Assert.Equal(expected, WindowsDexKeyboardCapture.NormalizeVirtualKey(original));
+        }
+
+        [Fact]
         public void CaptureSession_ExperimentalSdkSecondaryDisplay_IsEnabled()
         {
             var settings = new ScrcpyDeXSettings();
@@ -65,6 +89,10 @@ namespace ScrcpyDex.Core.Tests
             settings.Input.ForwardShortcuts = false;
 
             Assert.True(ScrcpyExecutionService.IsMouseDrivenDexKeyboardCaptureSession(settings, displayId: 2));
+            var arguments = ScrcpyExecutionService.BuildArgumentsList(settings, displayId: 2);
+            Assert.Contains("--raw-key-events", arguments);
+            Assert.Contains("--keyboard=sdk", arguments);
+            Assert.Contains("--display-id=2", arguments);
         }
 
         [Theory]
@@ -80,6 +108,7 @@ namespace ScrcpyDex.Core.Tests
             settings.Input.ForwardShortcuts = forwardShortcuts;
 
             Assert.False(ScrcpyExecutionService.IsMouseDrivenDexKeyboardCaptureSession(settings, displayId));
+            Assert.DoesNotContain("--raw-key-events", ScrcpyExecutionService.BuildArgumentsList(settings, displayId: displayId));
         }
     }
 }

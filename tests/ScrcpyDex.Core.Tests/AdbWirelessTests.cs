@@ -28,6 +28,23 @@ namespace ScrcpyDex.Core.Tests
     public class AdbWirelessTests
     {
         [Theory]
+        [InlineData(null, false, DirectAdbConnectionStatus.Failed)]
+        [InlineData("unauthorized", false, DirectAdbConnectionStatus.Unauthorized)]
+        [InlineData("offline", false, DirectAdbConnectionStatus.Offline)]
+        [InlineData("recovery", false, DirectAdbConnectionStatus.Failed)]
+        [InlineData("device", true, DirectAdbConnectionStatus.AlreadyConnected)]
+        public void DirectConnection_RequiresAuthorizedAdbTransport(
+            string? state, bool succeeded, DirectAdbConnectionStatus expected)
+        {
+            const string target = "192.0.2.10:46311";
+            var device = state == null ? null : new DeviceInfo(target, "SM_F731B", state);
+            var result = AdbService.EvaluateDirectAdbConnection(target, device, alreadyConnected: true, isTlsEndpoint: true);
+            Assert.Equal(succeeded, result.Succeeded);
+            Assert.Equal(expected, result.Status);
+            Assert.True(result.IsTls);
+        }
+
+        [Theory]
         [InlineData("R5CW123456", null, DeviceTransport.Usb)]
         [InlineData("R5CW123456", "R5CW123456\tdevice usb:1-2 product:dm3q model:SM_S918B", DeviceTransport.Usb)]
         [InlineData("192.0.2.10:5555", null, DeviceTransport.Wireless)]

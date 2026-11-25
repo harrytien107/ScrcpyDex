@@ -62,9 +62,10 @@ namespace ScrcpyDex.App.ViewModels
         private DispatcherTimer? _telemetryTimer;
         private CancellationTokenSource? _pairingCts;
         private readonly ConcurrentDictionary<string, string> _hardwareSerialCache = new(StringComparer.OrdinalIgnoreCase);
-        private readonly ConcurrentDictionary<string, byte> _disconnectedDuplicates = new(StringComparer.OrdinalIgnoreCase);
-        private readonly ConcurrentDictionary<string, byte> _manualWirelessTargets = new(StringComparer.OrdinalIgnoreCase);
-        private string? _lastDirectAdbTargetSerial;
+        private IReadOnlyList<DeviceInfo> _directAdbDevices = Array.Empty<DeviceInfo>();
+        private IReadOnlyList<MdnsAdbServiceEndpoint> _directAdbMdns = Array.Empty<MdnsAdbServiceEndpoint>();
+        private DirectAdbConnectionResult? _directAdbLastResult;
+        private bool _refreshingDirectAdbMdns;
         private string? _pendingUnplugUsbSerial;
         private string? _pendingUnplugWirelessSerial;
         private bool _pendingUnplugUsedLegacyTcpIp;
@@ -131,6 +132,21 @@ namespace ScrcpyDex.App.ViewModels
 
         [ObservableProperty]
         private string _directAdbStatusText = LocalizationManager.Instance.GetString("DirectAdb_Idle");
+
+        [ObservableProperty]
+        private string _directAdbStatusLabel = "Disconnected";
+
+        [ObservableProperty]
+        private Avalonia.Media.IBrush _directAdbStatusBrush = Avalonia.Media.Brush.Parse("#86868B");
+
+        [ObservableProperty]
+        private string _directAdbDeviceText = string.Empty;
+
+        [ObservableProperty]
+        private IReadOnlyList<string> _directAdbEndpoints = Array.Empty<string>();
+
+        [ObservableProperty]
+        private string? _selectedDirectAdbEndpoint;
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(CanUseDirectAdbButtons))]
@@ -894,6 +910,7 @@ namespace ScrcpyDex.App.ViewModels
             };
             _telemetryTimer.Tick += async (s, e) =>
             {
+                await RefreshDirectAdbMdnsAsync();
                 await UpdateDeviceTelemetryAsync().ConfigureAwait(false);
             };
             _telemetryTimer.Start();
@@ -1484,6 +1501,8 @@ namespace ScrcpyDex.App.ViewModels
         {
             var previousSerial = SelectedDevice?.Serial;
             var rawDevices = devices?.ToList() ?? new List<DeviceInfo>();
+            _directAdbDevices = rawDevices.Where(d => d.IsWireless).ToList();
+            UpdateDirectAdbStatus();
 
             // Auto-close "Unplug USB cable" prompt as soon as the USB cable is disconnected
             if (IsUnplugUsbPromptVisible &&
@@ -1557,7 +1576,8 @@ namespace ScrcpyDex.App.ViewModels
                 });
             }
 
-            var filteredDevices = DeduplicateDevices(rawDevices);
+            // Keep each ADB transport selectable, including externally connected TCP/IP devices.
+            var filteredDevices = rawDevices.DistinctBy(d => d.Serial, StringComparer.OrdinalIgnoreCase).ToList();
 
             // Update DeviceList in place to prevent clearing ComboBox selection to null
             for (int i = DeviceList.Count - 1; i >= 0; i--)
@@ -1622,106 +1642,119 @@ namespace ScrcpyDex.App.ViewModels
             });
         }
 
-        private List<DeviceInfo> DeduplicateDevices(List<DeviceInfo> rawDevices)
+        private static string FormatAdbEndpoint(string host, int port) =>
+            host.Contains(':') && !host.StartsWith("[", StringComparison.Ordinal)
+                ? $"[{host}]:{port}" : $"{host}:{port}";
+
+        private static bool IsConnectService(MdnsAdbServiceEndpoint endpoint) =>
+            endpoint.ServiceType.TrimEnd('.') is "_adb-tls-connect._tcp" or "_adb._tcp";
+
+        private string GetWirelessEndpoint(DeviceInfo device)
         {
-            var result = new List<DeviceInfo>();
-            var grouped = rawDevices.GroupBy(d =>
-                !string.IsNullOrWhiteSpace(d.HardwareSerial) ? d.HardwareSerial : d.Serial,
-                StringComparer.OrdinalIgnoreCase);
+            var service = _directAdbMdns.FirstOrDefault(e =>
+                device.Serial.Equals(e.InstanceName, StringComparison.OrdinalIgnoreCase) ||
+                device.Serial.StartsWith(e.InstanceName + ".", StringComparison.OrdinalIgnoreCase));
+            return service == null ? device.Serial : FormatAdbEndpoint(service.IpAddress, service.Port);
+        }
 
-            foreach (var group in grouped)
+        partial void OnDirectAdbHostChanged(string value)
+        {
+            _directAdbLastResult = null;
+            UpdateDirectAdbStatus();
+        }
+
+        partial void OnDirectAdbPortChanged(string value)
+        {
+            _directAdbLastResult = null;
+            UpdateDirectAdbStatus();
+        }
+
+        partial void OnSelectedDirectAdbEndpointChanged(string? value)
+        {
+            if (value == null || !System.Net.IPEndPoint.TryParse(value, out var endpoint))
+                return;
+            DirectAdbHost = endpoint.Address.ToString();
+            DirectAdbPort = endpoint.Port.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private async Task RefreshDirectAdbMdnsAsync()
+        {
+            if (_isDisposed || !IsAdbDetected || _refreshingDirectAdbMdns || IsDirectAdbBusy)
+                return;
+            _refreshingDirectAdbMdns = true;
+            try
             {
-                var items = group.ToList();
-                var usb = items.FirstOrDefault(d => d.IsUsb && d.IsConnected) ?? items.FirstOrDefault(d => d.IsUsb);
-                var tlsWireless = items.FirstOrDefault(d => d.IsWireless && d.IsTlsWireless && d.IsConnected)
-                                  ?? items.FirstOrDefault(d => d.IsWireless && d.IsTlsWireless);
-                var legacyTcpIp = items.Where(d => d.IsLegacyTcpIp).ToList();
-                var manualWireless = items
-                    .Where(d => d.IsWireless && _manualWirelessTargets.ContainsKey(d.Serial))
-                    .ToList();
-                var autoLegacyTcpIp = legacyTcpIp
-                    .Where(d => !_manualWirelessTargets.ContainsKey(d.Serial))
-                    .ToList();
-
-                // Rule 1: Whenever a native TLS connection exists, disable any legacy non-TLS TCP/IP connection
-                if (tlsWireless != null && autoLegacyTcpIp.Count > 0)
-                {
-                    foreach (var legacy in autoLegacyTcpIp)
-                    {
-                        if (_disconnectedDuplicates.TryAdd(legacy.Serial, 1))
-                        {
-                            string legacySerial = legacy.Serial;
-                            string? usbSerial = usb?.Serial;
-                            _ = Task.Run(async () =>
-                            {
-                                await _adbService.DisableTcpIpModeAsync(null, legacySerial).ConfigureAwait(false);
-                                _disconnectedDuplicates.TryRemove(legacySerial, out _);
-                            });
-                        }
-                    }
-                }
-
-                // Rule 2: If waiting for user to unplug USB after initiating Wi-Fi transition, keep the target wireless entry active
-                if (IsUnplugUsbPromptVisible &&
-                    usb != null &&
-                    string.Equals(usb.Serial, _pendingUnplugUsbSerial, StringComparison.OrdinalIgnoreCase))
-                {
-                    var targetWireless = (!string.IsNullOrWhiteSpace(_pendingUnplugWirelessSerial)
-                        ? items.FirstOrDefault(d => string.Equals(d.Serial, _pendingUnplugWirelessSerial, StringComparison.OrdinalIgnoreCase))
-                        : null) ?? tlsWireless ?? legacyTcpIp.FirstOrDefault();
-
-                    if (targetWireless != null)
-                    {
-                        result.Add(targetWireless);
-                        continue;
-                    }
-                }
-
-                // Rule 3: When USB is connected in normal state, prefer USB and suppress/disconnect duplicate wireless targets
-                if (usb != null)
-                {
-                    result.Add(usb);
-                    foreach (var manual in manualWireless)
-                    {
-                        if (!result.Any(d => string.Equals(d.Serial, manual.Serial, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            result.Add(manual);
-                        }
-                    }
-                    foreach (var legacy in autoLegacyTcpIp)
-                    {
-                        if (_disconnectedDuplicates.TryAdd(legacy.Serial, 1))
-                        {
-                            string legacySerial = legacy.Serial;
-                            _ = Task.Run(async () =>
-                            {
-                                await _adbService.DisconnectWirelessDeviceAsync(legacySerial).ConfigureAwait(false);
-                                _disconnectedDuplicates.TryRemove(legacySerial, out _);
-                            });
-                        }
-                    }
-                    continue;
-                }
-
-                // Rule 4: Wireless only — prefer TLS wireless over legacy TCP/IP
-                if (tlsWireless != null)
-                {
-                    result.Add(tlsWireless);
-                    foreach (var manual in manualWireless)
-                    {
-                        if (!result.Any(d => string.Equals(d.Serial, manual.Serial, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            result.Add(manual);
-                        }
-                    }
-                }
-                else
-                {
-                    result.AddRange(items);
-                }
+                var services = await _adbService.GetMdnsServicesAsync();
+                if (_isDisposed)
+                    return;
+                _directAdbMdns = services.Where(IsConnectService).ToList();
+                UpdateDirectAdbStatus();
             }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"ADB discovery: {ex.Message}");
+            }
+            finally
+            {
+                _refreshingDirectAdbMdns = false;
+            }
+        }
 
-            return result;
+        private void SetDirectAdbStatus(string label, string color, string detail)
+        {
+            DirectAdbStatusLabel = label;
+            DirectAdbStatusBrush = Avalonia.Media.Brush.Parse(color);
+            DirectAdbStatusText = detail;
+        }
+
+        private void UpdateDirectAdbStatus()
+        {
+            var endpoints = _directAdbDevices.Select(GetWirelessEndpoint)
+                .Concat(_directAdbMdns.Select(e => FormatAdbEndpoint(e.IpAddress, e.Port)))
+                .Where(e => System.Net.IPEndPoint.TryParse(e, out _))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (!DirectAdbEndpoints.SequenceEqual(endpoints))
+                DirectAdbEndpoints = endpoints;
+            DirectAdbDeviceText = string.Join("\n", _directAdbDevices.Select(d =>
+                $"{d.MarketingName} | {d.ModelCode} | {GetWirelessEndpoint(d)} | {(d.IsTlsWireless ? "Wireless TLS" : "Wireless TCP/IP")} | {(d.IsConnected ? "Connected" : d.State)}"));
+            if (IsDirectAdbBusy)
+                return;
+
+            var target = TryGetDirectAdbTargetSerial(out var serial) ? serial : null;
+            var device = _directAdbDevices.FirstOrDefault(d =>
+                string.Equals(GetWirelessEndpoint(d), target, StringComparison.OrdinalIgnoreCase));
+            if (target == null && endpoints.Length > 0 && string.IsNullOrWhiteSpace(DirectAdbHost))
+            {
+                SelectedDirectAdbEndpoint = endpoints[0];
+                return;
+            }
+            if (device != null)
+            {
+                _directAdbLastResult = null;
+                if (device.IsConnected)
+                    SetDirectAdbStatus("Connected", "#65D99A", $"Authorized: {target}");
+                else if (device.State.Equals("unauthorized", StringComparison.OrdinalIgnoreCase))
+                    SetDirectAdbStatus("Unauthorized", "#FF9A3D", $"Authorize ADB on the phone: {target}");
+                else
+                    SetDirectAdbStatus(device.State, "#FF6969", $"{target} is {device.State}.");
+            }
+            else if (_directAdbLastResult is { Succeeded: false } failure)
+            {
+                var (label, color) = failure.Status switch
+                {
+                    DirectAdbConnectionStatus.Unauthorized => ("Unauthorized", "#FF9A3D"),
+                    DirectAdbConnectionStatus.Offline => ("Offline", "#FF6969"),
+                    DirectAdbConnectionStatus.ConnectionRefused => ("Connection refused", "#FF6969"),
+                    DirectAdbConnectionStatus.TimedOut => ("Timed out", "#FF6969"),
+                    DirectAdbConnectionStatus.InvalidAddress => ("Invalid address", "#FF6969"),
+                    _ => ("Connection failed", "#FF6969")
+                };
+                SetDirectAdbStatus(label, color, failure.Message);
+            }
+            else if (target != null && endpoints.Contains(target, StringComparer.OrdinalIgnoreCase))
+                SetDirectAdbStatus("Discovered", "#6AB8FF", $"Wireless debugging endpoint: {target}");
+            else
+                SetDirectAdbStatus("Disconnected", "#86868B", LocalizationManager.Instance.GetString("DirectAdb_Idle"));
         }
 
         private async Task EnrichUnknownDevicesAsync()
@@ -1794,28 +1827,21 @@ namespace ScrcpyDex.App.ViewModels
 
             IsDirectAdbBusy = true;
             StopWirelessPairing();
-            DirectAdbStatusText = string.Format(
+            _directAdbLastResult = null;
+            SetDirectAdbStatus("Connecting", "#FF9A3D", string.Format(
                 CultureInfo.CurrentCulture,
                 LocalizationManager.Instance.GetString("DirectAdb_Connecting"),
                 DirectAdbHost.Trim(),
-                port);
+                port));
 
             try
             {
                 var result = await _adbService.ConnectDirectTcpIpAsync(
                     DirectAdbHost,
                     port,
-                    isTlsEndpoint: false).ConfigureAwait(false);
-
-                if (!string.IsNullOrWhiteSpace(result.TargetSerial) &&
-                    result.Status is DirectAdbConnectionStatus.Connected or
-                        DirectAdbConnectionStatus.AlreadyConnected or
-                        DirectAdbConnectionStatus.Unauthorized or
-                        DirectAdbConnectionStatus.Offline)
-                {
-                    _manualWirelessTargets[result.TargetSerial] = 1;
-                    _lastDirectAdbTargetSerial = result.TargetSerial;
-                }
+                    isTlsEndpoint: _directAdbMdns.Any(e =>
+                        e.ServiceType.TrimEnd('.') == "_adb-tls-connect._tcp" &&
+                        e.IpAddress == DirectAdbHost.Trim() && e.Port == port)).ConfigureAwait(false);
 
                 await SaveCurrentSettingsAsync().ConfigureAwait(false);
                 var devices = await _adbService.GetConnectedDevicesAsync().ConfigureAwait(false);
@@ -1834,7 +1860,7 @@ namespace ScrcpyDex.App.ViewModels
                         }
                     }
 
-                    DirectAdbStatusText = result.Message;
+                    _directAdbLastResult = result;
                     SessionStatusText = result.Message;
                     LogEntries.Push(new ProcessLogEntry(
                         DateTime.Now,
@@ -1846,7 +1872,7 @@ namespace ScrcpyDex.App.ViewModels
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    DirectAdbStatusText = ex.Message;
+                    _directAdbLastResult = new DirectAdbConnectionResult(false, null, DirectAdbConnectionStatus.Failed, ex.Message);
                     SessionStatusText = ex.Message;
                     LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Direct ADB connection error: {ex.Message}", ProcessLogLevel.Error));
                 });
@@ -1856,6 +1882,7 @@ namespace ScrcpyDex.App.ViewModels
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     IsDirectAdbBusy = false;
+                    UpdateDirectAdbStatus();
                     if (!HasSelectedDevice && !_isDisposed)
                     {
                         StartOrRefreshWirelessPairing();
@@ -1874,17 +1901,12 @@ namespace ScrcpyDex.App.ViewModels
             }
 
             IsDirectAdbBusy = true;
+            SetDirectAdbStatus("Disconnecting", "#FF9A3D", targetSerial);
+            var device = _directAdbDevices.FirstOrDefault(d =>
+                string.Equals(GetWirelessEndpoint(d), targetSerial, StringComparison.OrdinalIgnoreCase));
             try
             {
-                bool disconnected = await _adbService.DisconnectWirelessDeviceAsync(targetSerial).ConfigureAwait(false);
-                if (disconnected)
-                {
-                    _manualWirelessTargets.TryRemove(targetSerial, out _);
-                    if (string.Equals(_lastDirectAdbTargetSerial, targetSerial, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _lastDirectAdbTargetSerial = null;
-                    }
-                }
+                bool disconnected = await _adbService.DisconnectWirelessDeviceAsync(device?.Serial ?? targetSerial).ConfigureAwait(false);
 
                 await SaveCurrentSettingsAsync().ConfigureAwait(false);
                 var devices = await _adbService.GetConnectedDevicesAsync().ConfigureAwait(false);
@@ -1892,6 +1914,8 @@ namespace ScrcpyDex.App.ViewModels
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     UpdateDevicesList(devices);
+                    _directAdbLastResult = disconnected ? null : new DirectAdbConnectionResult(
+                        false, targetSerial, DirectAdbConnectionStatus.Failed, $"Failed to disconnect {targetSerial}.");
                     DirectAdbStatusText = disconnected
                         ? string.Format(CultureInfo.CurrentCulture, LocalizationManager.Instance.GetString("DirectAdb_Disconnected"), targetSerial)
                         : string.Format(CultureInfo.CurrentCulture, LocalizationManager.Instance.GetString("DirectAdb_DisconnectFailed"), targetSerial);
@@ -1906,13 +1930,17 @@ namespace ScrcpyDex.App.ViewModels
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    DirectAdbStatusText = ex.Message;
+                    _directAdbLastResult = new DirectAdbConnectionResult(false, targetSerial, DirectAdbConnectionStatus.Failed, ex.Message);
                     LogEntries.Push(new ProcessLogEntry(DateTime.Now, $"Direct ADB disconnect error: {ex.Message}", ProcessLogLevel.Error));
                 });
             }
             finally
             {
-                await Dispatcher.UIThread.InvokeAsync(() => IsDirectAdbBusy = false);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    IsDirectAdbBusy = false;
+                    UpdateDirectAdbStatus();
+                });
             }
         }
 
@@ -1932,12 +1960,6 @@ namespace ScrcpyDex.App.ViewModels
                 }
 
                 targetSerial = $"{host}:{port}";
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(_lastDirectAdbTargetSerial))
-            {
-                targetSerial = _lastDirectAdbTargetSerial;
                 return true;
             }
 

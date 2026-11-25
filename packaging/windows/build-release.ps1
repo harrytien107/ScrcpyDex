@@ -8,7 +8,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "2.1.2",
+    [string]$Version = "2.1.3",
     [string]$Configuration = "Release",
     [string]$OutputDir = "",
     [string]$ScrcpySourceDir = ""

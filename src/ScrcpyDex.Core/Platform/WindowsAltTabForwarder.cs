@@ -173,7 +173,7 @@ namespace ScrcpyDex.Core.Platform
                                 // chords reach scrcpy without triggering host-window accelerators.
                                 uint targetMessage = keyDown ? WmKeyDown : WmKeyUp;
                                 IntPtr keyLParam = BuildKeyLParam(data, keyUp, wasCaptured);
-                                if (PostMessage(targetWindow, targetMessage, (IntPtr)data.VirtualKeyCode, keyLParam))
+                                if (PostMessage(targetWindow, targetMessage, (IntPtr)NormalizeVirtualKey(data.VirtualKeyCode), keyLParam))
                                 {
                                     return (IntPtr)1;
                                 }
@@ -241,6 +241,16 @@ namespace ScrcpyDex.Core.Platform
             GetWindowThreadProcessId(windowHandle, out uint processId);
             return processId == unchecked((uint)_targetProcessId);
         }
+
+        // Win32 window messages use generic modifier VKs; scan codes and the
+        // extended bit retain the left/right identity for SDL.
+        internal static uint NormalizeVirtualKey(uint virtualKeyCode) => virtualKeyCode switch
+        {
+            0xA0 or 0xA1 => 0x10,
+            0xA2 or 0xA3 => 0x11,
+            0xA4 or 0xA5 => 0x12,
+            _ => virtualKeyCode
+        };
 
         private static IntPtr BuildKeyLParam(KeyboardHookData data, bool keyUp, bool wasDown)
         {
@@ -388,6 +398,7 @@ namespace ScrcpyDex.Core.Platform
     internal sealed class KeyboardCaptureOwnership
     {
         private readonly HashSet<uint> _capturedKeys = new();
+        private readonly HashSet<uint> _hostKeys = new();
 
         public bool IsCaptured(uint virtualKeyCode) => _capturedKeys.Contains(virtualKeyCode);
 
@@ -400,8 +411,9 @@ namespace ScrcpyDex.Core.Platform
                     return true;
                 }
 
-                if (!pointerInside)
+                if (_hostKeys.Contains(virtualKeyCode) || !pointerInside)
                 {
+                    _hostKeys.Add(virtualKeyCode);
                     return false;
                 }
 
@@ -409,16 +421,25 @@ namespace ScrcpyDex.Core.Platform
                 return true;
             }
 
-            if (keyUp && _capturedKeys.Remove(virtualKeyCode))
+            if (keyUp)
             {
-                return true;
+                _hostKeys.Remove(virtualKeyCode);
+                return _capturedKeys.Remove(virtualKeyCode);
             }
 
             return false;
         }
 
-        public void CancelCapture(uint virtualKeyCode) => _capturedKeys.Remove(virtualKeyCode);
+        public void CancelCapture(uint virtualKeyCode)
+        {
+            _capturedKeys.Remove(virtualKeyCode);
+            _hostKeys.Add(virtualKeyCode);
+        }
 
-        public void Clear() => _capturedKeys.Clear();
+        public void Clear()
+        {
+            _capturedKeys.Clear();
+            _hostKeys.Clear();
+        }
     }
 }

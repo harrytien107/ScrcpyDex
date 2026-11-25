@@ -372,20 +372,22 @@
                                                LetterSpacing="0.7"
                                                Foreground="#D0D0D7" />
                                     <TextBlock Grid.Column="1"
-                                               Text="ADB TCP/IP"
+                                               Text="{Binding DirectAdbStatusLabel}"
                                                FontSize="9"
-                                               Foreground="#86868B"
+                                               Foreground="{Binding DirectAdbStatusBrush}"
                                                HorizontalAlignment="Right" />
                                 </Grid>
 
                                 <Grid ColumnDefinitions="*, 8, 72, 8, Auto, 6, Auto">
                                     <TextBox Grid.Column="0"
                                              Text="{Binding DirectAdbHost, Mode=TwoWay}"
+                                             IsEnabled="{Binding CanUseDirectAdbButtons}"
                                              Watermark="{Binding [DirectAdb_HostPlaceholder], Source={x:Static loc:LocalizationManager.Instance}}"
                                              FontSize="10.5"
                                              Height="32" />
                                     <TextBox Grid.Column="2"
                                              Text="{Binding DirectAdbPort, Mode=TwoWay}"
+                                             IsEnabled="{Binding CanUseDirectAdbButtons}"
                                              Watermark="5555"
                                              FontSize="10.5"
                                              Height="32"
@@ -415,7 +417,17 @@
 
                                 <TextBlock Text="{Binding DirectAdbStatusText}"
                                            FontSize="9"
-                                           Foreground="#86868B"
+                                           Foreground="{Binding DirectAdbStatusBrush}"
+                                           TextWrapping="Wrap" />
+                                <ComboBox ItemsSource="{Binding DirectAdbEndpoints}"
+                                          SelectedItem="{Binding SelectedDirectAdbEndpoint, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanUseDirectAdbButtons}"
+                                          PlaceholderText="Wireless ADB endpoints"
+                                          HorizontalAlignment="Stretch"
+                                          FontSize="10" />
+                                <TextBlock Text="{Binding DirectAdbDeviceText}"
+                                           FontSize="9"
+                                           Foreground="#D0D0D7"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>

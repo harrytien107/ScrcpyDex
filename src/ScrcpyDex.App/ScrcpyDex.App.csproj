@@ -9,7 +9,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>ScrcpyDex.App</RootNamespace>
     <AssemblyName>ScrcpyDex.App</AssemblyName>
-    <Version>2.1.2</Version>
+    <Version>2.1.3</Version>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
 

@@ -1249,6 +1249,12 @@ namespace ScrcpyDex.Services
             var device = devices.FirstOrDefault(d =>
                 string.Equals(d.Serial, targetSerial, StringComparison.OrdinalIgnoreCase));
 
+            return EvaluateDirectAdbConnection(targetSerial, device, alreadyConnected, isTlsEndpoint);
+        }
+
+        internal static DirectAdbConnectionResult EvaluateDirectAdbConnection(
+            string targetSerial, DeviceInfo? device, bool alreadyConnected, bool isTlsEndpoint)
+        {
             if (device != null && device.State.Equals("unauthorized", StringComparison.OrdinalIgnoreCase))
             {
                 return new DirectAdbConnectionResult(
@@ -1266,6 +1272,16 @@ namespace ScrcpyDex.Services
                     targetSerial,
                     DirectAdbConnectionStatus.Offline,
                     $"{targetSerial} is offline. Re-enable ADB or reconnect the phone.",
+                    isTlsEndpoint);
+            }
+
+            if (device?.IsConnected != true)
+            {
+                return new DirectAdbConnectionResult(
+                    false,
+                    targetSerial,
+                    DirectAdbConnectionStatus.Failed,
+                    $"ADB has not confirmed an authorized connection to {targetSerial}.",
                     isTlsEndpoint);
             }
 
