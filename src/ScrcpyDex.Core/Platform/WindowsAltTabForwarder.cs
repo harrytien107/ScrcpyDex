@@ -42,6 +42,7 @@ namespace ScrcpyDex.Core.Platform
         private Thread? _thread;
         private IntPtr _hookHandle;
         private IntPtr _targetWindow;
+        private IntPtr _returnForegroundWindow;
         private uint _threadId;
         private Exception? _startupException;
         private bool _disposed;
@@ -162,9 +163,43 @@ namespace ScrcpyDex.Core.Platform
                         bool pointerInside = TryGetScrcpyWindowUnderCursor(out IntPtr hoveredWindow);
                         bool wasCaptured = _ownership.IsCaptured(data.VirtualKeyCode);
 
+                        if (!pointerInside && keyDown && !wasCaptured && _returnForegroundWindow != IntPtr.Zero)
+                        {
+                            if (GetForegroundWindow() == _targetWindow && IsWindow(_returnForegroundWindow))
+                            {
+                                SetForegroundWindow(_returnForegroundWindow);
+                            }
+                            _returnForegroundWindow = IntPtr.Zero;
+                        }
+
                         if (_ownership.ShouldCapture(data.VirtualKeyCode, keyDown, keyUp, pointerInside))
                         {
                             IntPtr targetWindow = pointerInside ? hoveredWindow : _targetWindow;
+                            bool targetForeground = targetWindow != IntPtr.Zero && GetForegroundWindow() == targetWindow;
+                            if (keyDown && !wasCaptured && pointerInside &&
+                                _ownership.CanStartNativeShift(data.VirtualKeyCode) && !targetForeground)
+                            {
+                                // Native Shift state requires the real keyboard input queue.
+                                IntPtr previousForeground = GetForegroundWindow();
+                                SetForegroundWindow(targetWindow);
+                                targetForeground = GetForegroundWindow() == targetWindow;
+                                if (targetForeground && previousForeground != IntPtr.Zero)
+                                {
+                                    _returnForegroundWindow = previousForeground;
+                                }
+                            }
+
+                            CapturedKeyRoute route = _ownership.GetCapturedKeyRoute(
+                                data.VirtualKeyCode, keyDown, keyUp, wasCaptured, targetForeground);
+                            if (route == CapturedKeyRoute.Native)
+                            {
+                                return CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+                            }
+                            if (route == CapturedKeyRoute.Suppress)
+                            {
+                                return (IntPtr)1;
+                            }
+
                             if (targetWindow != IntPtr.Zero && IsWindowOwnedByTargetProcess(targetWindow))
                             {
                                 _targetWindow = targetWindow;
@@ -343,6 +378,10 @@ namespace ScrcpyDex.Core.Platform
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetCursorPos(out Point point);
 
         [DllImport("user32.dll")]
@@ -395,10 +434,18 @@ namespace ScrcpyDex.Core.Platform
         private static extern uint GetCurrentThreadId();
     }
 
+    internal enum CapturedKeyRoute
+    {
+        Forward,
+        Native,
+        Suppress
+    }
+
     internal sealed class KeyboardCaptureOwnership
     {
         private readonly HashSet<uint> _capturedKeys = new();
         private readonly HashSet<uint> _hostKeys = new();
+        private readonly HashSet<uint> _nativeKeys = new();
 
         public bool IsCaptured(uint virtualKeyCode) => _capturedKeys.Contains(virtualKeyCode);
 
@@ -436,10 +483,60 @@ namespace ScrcpyDex.Core.Platform
             _hostKeys.Add(virtualKeyCode);
         }
 
+        public bool CanStartNativeShift(uint virtualKeyCode) =>
+            IsShift(virtualKeyCode) && !HostShortcutModifierHeld();
+
+        public CapturedKeyRoute GetCapturedKeyRoute(uint virtualKeyCode, bool keyDown, bool keyUp,
+            bool wasCaptured, bool targetForeground)
+        {
+            if (_nativeKeys.Contains(virtualKeyCode))
+            {
+                if (keyUp)
+                {
+                    _nativeKeys.Remove(virtualKeyCode);
+                    // Always release native keys, even if focus moved while held.
+                    return CapturedKeyRoute.Native;
+                }
+                return targetForeground ? CapturedKeyRoute.Native : CapturedKeyRoute.Suppress;
+            }
+
+            // SDL clears a posted Shift press when GetKeyState says Shift is up.
+            // Keep Shift and ordinary typing on the same real Windows input queue.
+            // Posting ordinary keys after a native Shift release could otherwise
+            // reorder them ahead of the release. Intercept other modifier chords.
+            if (keyDown && !wasCaptured && targetForeground && !HostShortcutModifierHeld() &&
+                (IsShift(virtualKeyCode) ||
+                 !CapturedShortcutModifierHeld() && IsOrdinaryKey(virtualKeyCode)))
+            {
+                _nativeKeys.Add(virtualKeyCode);
+                return CapturedKeyRoute.Native;
+            }
+
+            return CapturedKeyRoute.Forward;
+        }
+
+        private bool HostShortcutModifierHeld() => ShortcutModifierHeld(_hostKeys);
+
+        private bool CapturedShortcutModifierHeld() => ShortcutModifierHeld(_capturedKeys);
+
+        private static bool ShortcutModifierHeld(HashSet<uint> keys) =>
+            keys.Contains(0x11) || keys.Contains(0x12) ||
+            keys.Contains(0xA2) || keys.Contains(0xA3) ||
+            keys.Contains(0xA4) || keys.Contains(0xA5) ||
+            keys.Contains(0x5B) || keys.Contains(0x5C);
+
+        private static bool IsShift(uint virtualKeyCode) => virtualKeyCode is 0x10 or 0xA0 or 0xA1;
+
+        private static bool IsOrdinaryKey(uint virtualKeyCode) => virtualKeyCode is
+            >= 0x30 and <= 0x39 or >= 0x41 and <= 0x5A or // Numbers and letters
+            >= 0x60 and <= 0x6F or >= 0xBA and <= 0xC0 or >= 0xDB and <= 0xDF or 0xE2 or
+            >= 0x21 and <= 0x28 or 0x08 or 0x09 or 0x0D or 0x20 or 0x2D or 0x2E;
+
         public void Clear()
         {
             _capturedKeys.Clear();
             _hostKeys.Clear();
+            _nativeKeys.Clear();
         }
     }
 }
