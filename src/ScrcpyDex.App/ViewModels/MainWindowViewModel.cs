@@ -1081,7 +1081,7 @@ namespace ScrcpyDex.App.ViewModels
             try
             {
                 var settings = new ScrcpyDeXSettings();
-                settings.Version = "2.1.2";
+                settings.Version = typeof(MainWindowViewModel).Assembly.GetName().Version!.ToString(3);
                 settings.Language = CurrentLanguage;
                 settings.Display = BuildDisplaySection();
                 settings.Input.MouseDriver = ResolveEffectiveMouseDriver();
